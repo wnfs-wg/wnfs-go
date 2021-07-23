@@ -66,6 +66,12 @@ func (ls Links) Add(link Link) {
 	ls.l[link.Name] = link
 }
 
+func (ls Links) Remove(name string) bool {
+	_, existed := ls.l[name]
+	delete(ls.l, name)
+	return existed
+}
+
 func (ls Links) Get(name string) *Link {
 	lk, ok := ls.l[name]
 	if !ok {

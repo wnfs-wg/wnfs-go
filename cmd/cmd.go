@@ -78,6 +78,16 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
+				Name:  "mkdir",
+				Usage: "create a directory",
+				Action: func(c *cli.Context) error {
+					defer updateExternalState()
+					return fs.Mkdir(c.Args().Get(0), wnfs.MutationOptions{
+						Commit: true,
+					})
+				},
+			},
+			{
 				Name:  "cat",
 				Usage: "cat a file",
 				Action: func(c *cli.Context) error {
@@ -108,9 +118,8 @@ func main() {
 				},
 			},
 			{
-				Name:    "ls",
-				Aliases: []string{"ls"},
-				Usage:   "list the contents of a directory",
+				Name:  "ls",
+				Usage: "list the contents of a directory",
 				Action: func(c *cli.Context) error {
 					entries, err := fs.Ls(c.Args().Get(0))
 					if err != nil {
@@ -121,6 +130,16 @@ func main() {
 						fmt.Println(entry.Name())
 					}
 					return nil
+				},
+			},
+			{
+				Name:  "rm",
+				Usage: "remove files and directories",
+				Action: func(c *cli.Context) error {
+					defer updateExternalState()
+					return fs.Rm(c.Args().Get(0), wnfs.MutationOptions{
+						Commit: true,
+					})
 				},
 			},
 			{

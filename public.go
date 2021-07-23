@@ -101,6 +101,7 @@ func loadTreeFromCID(store mdstore.MerkleDagStore, name string, id cid.Cid) (*Pu
 
 var (
 	_ mdstore.DagNode = (*PublicTree)(nil)
+	_ Tree            = (*PublicTree)(nil)
 	_ fs.File         = (*PublicTree)(nil)
 	_ fs.ReadDirFile  = (*PublicTree)(nil)
 )
@@ -183,6 +184,33 @@ func (t *PublicTree) Get(path Path) (fs.File, error) {
 	return loadTreeFromCID(t.store, link.Name, link.Cid)
 }
 
+func (t *PublicTree) Mkdir(path Path) (res putResult, err error) {
+	if len(path) < 1 {
+		return res, errors.New("invalid path: empty")
+	}
+
+	head, tail := path.Shift()
+	childDir, err := t.getOrCreateDirectChildTree(head)
+	if err != nil {
+		return putResult{}, err
+	}
+
+	if tail == nil {
+		res, err = childDir.Put()
+		if err != nil {
+			return putResult{}, err
+		}
+	} else {
+		res, err = t.Mkdir(tail)
+		if err != nil {
+			return putResult{}, err
+		}
+	}
+
+	t.updateUserlandLink(head, res)
+	return t.Put()
+}
+
 func (t *PublicTree) Add(path Path, f fs.File) (res putResult, err error) {
 	if len(path) == 0 {
 		return res, errors.New("invalid path: empty")
@@ -207,7 +235,41 @@ func (t *PublicTree) Add(path Path, f fs.File) (res putResult, err error) {
 		}
 	}
 
-	t.updateLink(head, res)
+	t.updateUserlandLink(head, res)
+	// contents of tree have changed, write an update.
+	// TODO(b5) - pretty sure this is a bug if multiple writes are batched in the
+	// same "publish" / transaction. Write advances the previous / current CID,
+	// so if the same directory is mutated multiple times before the next snapshot
+	// we'll have intermediate states as the "previous" pointer
+	return t.Put()
+}
+
+func (t *PublicTree) Rm(path Path) (putResult, error) {
+	head, tail := path.Shift()
+	if head == "" {
+		return putResult{}, fmt.Errorf("invalid path: empty")
+	}
+
+	if tail == nil {
+		t.removeUserlandLink(head)
+	} else {
+		link := t.userland.Get(head)
+		if link == nil {
+			return putResult{}, ErrNotFound
+		}
+		child, err := loadTreeFromCID(t.store, head, link.Cid)
+		if err != nil {
+			return putResult{}, err
+		}
+
+		// recurse
+		res, err := child.Rm(tail)
+		if err != nil {
+			return putResult{}, err
+		}
+		t.updateUserlandLink(head, res)
+	}
+
 	// contents of tree have changed, write an update.
 	// TODO(b5) - pretty sure this is a bug if multiple writes are batched in the
 	// same "publish" / transaction. Write advances the previous / current CID,
@@ -252,7 +314,7 @@ func (t *PublicTree) Put() (putResult, error) {
 	}
 
 	t.cid = result.Cid
-	log.Debugw("wrote public tree", "name", t.name, "cid", t.cid.String(), "links", links.Map())
+	log.Debugw("wrote public tree", "name", t.name, "cid", t.cid.String(), "userlandLinkCount", t.userland.Len(), "size", t.size)
 	return result, nil
 }
 
@@ -309,9 +371,15 @@ func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (putResult,
 	return ch.Put()
 }
 
-func (t *PublicTree) updateLink(name string, res putResult) {
+func (t *PublicTree) updateUserlandLink(name string, res putResult) {
 	t.userland.Add(res.ToLink(name))
 	t.skeleton[name] = res.ToSkeletonInfo()
+	t.metadata.UnixMeta.Mtime = Timestamp().Unix()
+}
+
+func (t *PublicTree) removeUserlandLink(name string) {
+	t.userland.Remove(name)
+	delete(t.skeleton, name)
 	t.metadata.UnixMeta.Mtime = Timestamp().Unix()
 }
 

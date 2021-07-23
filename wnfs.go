@@ -44,7 +44,7 @@ type WNFS interface {
 type PosixTree interface {
 	// directories (trees)
 	Ls(pathStr string) ([]fs.DirEntry, error)
-	// Mkdir(path string) error
+	Mkdir(pathStr string, opts ...MutationOptions) error
 
 	// files
 	Write(pathStr string, f fs.File, opts ...MutationOptions) error
@@ -53,7 +53,7 @@ type PosixTree interface {
 
 	// general
 	// Mv(from, to string) error
-	// Rm(path string) error
+	Rm(pathStr string, opts ...MutationOptions) error
 }
 
 type MutationOptions struct {
@@ -160,6 +160,27 @@ func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
 	return dir.ReadDir(-1)
 }
 
+func (fsys *fileSystem) Mkdir(pathStr string, opts ...MutationOptions) error {
+	log.Debugw("fileSystem.Mkdir", "pathStr", pathStr)
+	opt := MutationOptions{}.assign(opts)
+
+	tree, path, err := fsys.fsHierarchyDirectoryNode(pathStr)
+	if err != nil {
+		return err
+	}
+
+	tree.Mkdir(path)
+
+	if opt.Commit {
+		_, err := fsys.root.Put()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (fsys *fileSystem) Open(pathStr string) (fs.File, error) {
 	log.Debugw("fileSystem.Open", "pathStr", pathStr)
 	tree, path, err := fsys.fsHierarchyDirectoryNode(pathStr)
@@ -196,6 +217,29 @@ func (fsys *fileSystem) Write(pathStr string, f fs.File, opts ...MutationOptions
 	}
 
 	if _, err := node.Add(relPath, f); err != nil {
+		return err
+	}
+
+	if opt.Commit {
+		_, err := fsys.root.Put()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (fsys *fileSystem) Rm(pathStr string, opts ...MutationOptions) error {
+	log.Debugw("fileSystem.Rm", "pathStr", pathStr)
+	opt := MutationOptions{}.assign(opts)
+
+	tree, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
+	if err != nil {
+		return err
+	}
+
+	if _, err := tree.Rm(relPath); err != nil {
 		return err
 	}
 
@@ -261,8 +305,10 @@ type File interface {
 
 type Tree interface {
 	IsFile() bool
-	Add(path Path, f fs.File) (putResult, error)
 	Get(path Path) (fs.File, error)
+	Add(path Path, f fs.File) (putResult, error)
+	Rm(path Path) (putResult, error)
+	Mkdir(path Path) (putResult, error)
 }
 
 type Node interface {
@@ -329,6 +375,7 @@ func (r *rootTree) Put() (mdstore.PutResult, error) {
 		return result, err
 	}
 	r.id = result.Cid
+	log.Debugw("rootTree.put", "linksLen", r.Links().Len(), "cid", r.id)
 	return result, nil
 }
 
