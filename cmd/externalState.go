@@ -12,7 +12,7 @@ import (
 const stateFilename = "wnfs.json"
 
 func ExternalStatePath() (string, error) {
-	if path := os.Getenv("WNFS_PATH"); path != "" {
+	if path := os.Getenv("WNFS_STATE_PATH"); path != "" {
 		return path, nil
 	}
 

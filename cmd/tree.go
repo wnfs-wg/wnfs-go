@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"path/filepath"
 
@@ -40,7 +39,6 @@ func walkAdd(p treeprint.Tree, v interface{}) error {
 		}
 	case map[string]interface{}:
 		for dirName, dir := range x {
-			fmt.Printf("adding branch %s\n", dirName)
 			br := p.AddBranch(dirName)
 			sl, ok := dir.([]interface{})
 			if !ok {

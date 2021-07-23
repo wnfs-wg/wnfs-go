@@ -67,6 +67,11 @@ func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
 	return o
 }
 
+type merkleDagFS interface {
+	fs.FS
+	DagStore() mdstore.MerkleDagStore
+}
+
 type fileSystem struct {
 	store mdstore.MerkleDagStore
 	ctx   context.Context
@@ -75,33 +80,38 @@ type fileSystem struct {
 
 var (
 	_ WNFS            = (*fileSystem)(nil)
+	_ merkleDagFS     = (*fileSystem)(nil)
 	_ mdstore.DagNode = (*fileSystem)(nil)
 )
 
 func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore) (WNFS, error) {
-	root, err := newEmptyRootTree(dagStore, "")
+	fs := &fileSystem{
+		ctx:   ctx,
+		store: dagStore,
+	}
+
+	root, err := newEmptyRootTree(fs, "")
 	if err != nil {
 		return nil, err
 	}
 
-	return &fileSystem{
-		ctx:   ctx,
-		store: dagStore,
-		root:  root,
-	}, nil
+	fs.root = root
+	return fs, nil
 }
 
 func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid) (WNFS, error) {
-	root, err := newRootTreeFromCID(dagStore, id)
+	fs := &fileSystem{
+		ctx:   ctx,
+		store: dagStore,
+	}
+
+	root, err := newRootTreeFromCID(fs, id)
 	if err != nil {
 		return nil, err
 	}
 
-	return &fileSystem{
-		ctx:   ctx,
-		store: dagStore,
-		root:  root,
-	}, nil
+	fs.root = root
+	return fs, nil
 }
 
 func (fsys *fileSystem) Name() string         { return fsys.root.Name() }
@@ -133,6 +143,10 @@ func (fsys *fileSystem) ReadDir(n int) ([]fs.DirEntry, error) {
 	return []fs.DirEntry{
 		fsDirEntry{name: FileHierarchyNamePublic},
 	}, nil
+}
+
+func (fsys *fileSystem) DagStore() mdstore.MerkleDagStore {
+	return fsys.store
 }
 
 func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
@@ -203,13 +217,13 @@ func (fsys *fileSystem) Write(pathStr string, f fs.File, opts ...MutationOptions
 	log.Debugw("fileSystem.Write", "pathStr", pathStr)
 	opt := MutationOptions{}.assign(opts)
 
-	fi, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	if fi.IsDir() {
-		return errors.New("write only accepts file paths")
-	}
+	// fi, err := f.Stat()
+	// if err != nil {
+	// 	return err
+	// }
+	// if fi.IsDir() {
+	// 	return errors.New("write only accepts file paths")
+	// }
 
 	node, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
@@ -316,9 +330,9 @@ type Node interface {
 }
 
 type rootTree struct {
-	store mdstore.MerkleDagStore
-	id    cid.Cid
-	size  int64
+	fs   merkleDagFS
+	id   cid.Cid
+	size int64
 
 	Pretty  *BareTree
 	Public  *PublicTree
@@ -326,11 +340,11 @@ type rootTree struct {
 	MMPT    *MMPT
 }
 
-func newEmptyRootTree(store mdstore.MerkleDagStore, rootKey string) (*rootTree, error) {
+func newEmptyRootTree(fs merkleDagFS, rootKey string) (*rootTree, error) {
 	root := &rootTree{
-		store: store,
+		fs: fs,
 
-		Public: newEmptyPublicTree(store, FileHierarchyNamePublic),
+		Public: newEmptyPublicTree(fs, FileHierarchyNamePublic),
 		Pretty: &BareTree{},
 		// Private: *PrivateTree,
 		MMPT: &MMPT{},
@@ -339,8 +353,8 @@ func newEmptyRootTree(store mdstore.MerkleDagStore, rootKey string) (*rootTree, 
 	return root, nil
 }
 
-func newRootTreeFromCID(store mdstore.MerkleDagStore, id cid.Cid) (*rootTree, error) {
-	node, err := store.GetNode(id)
+func newRootTreeFromCID(fs merkleDagFS, id cid.Cid) (*rootTree, error) {
+	node, err := fs.DagStore().GetNode(id)
 	if err != nil {
 		return nil, fmt.Errorf("loading header block %q: %w", id.String(), err)
 	}
@@ -352,14 +366,14 @@ func newRootTreeFromCID(store mdstore.MerkleDagStore, id cid.Cid) (*rootTree, er
 		return nil, fmt.Errorf("root tree is missing %q link", FileHierarchyNamePublic)
 	}
 
-	public, err := loadTreeFromCID(store, FileHierarchyNamePublic, publicLink.Cid)
+	public, err := loadTreeFromCID(fs, FileHierarchyNamePublic, publicLink.Cid)
 	if err != nil {
 		return nil, err
 	}
 
 	root := &rootTree{
-		store: store,
-		id:    id,
+		fs: fs,
+		id: id,
 
 		Public: public,
 		Pretty: &BareTree{}, // TODO
@@ -370,7 +384,7 @@ func newRootTreeFromCID(store mdstore.MerkleDagStore, id cid.Cid) (*rootTree, er
 }
 
 func (r *rootTree) Put() (mdstore.PutResult, error) {
-	result, err := r.store.PutNode(r.Links())
+	result, err := r.fs.DagStore().PutNode(r.Links())
 	if err != nil {
 		return result, err
 	}
