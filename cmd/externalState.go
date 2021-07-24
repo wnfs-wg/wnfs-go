@@ -2,26 +2,40 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	"github.com/ipfs/go-cid"
+	"github.com/mitchellh/go-homedir"
 )
 
-const stateFilename = "wnfs.json"
+const stateFilename = "wnfs-go.json"
 
 func ExternalStatePath() (string, error) {
 	if path := os.Getenv("WNFS_STATE_PATH"); path != "" {
 		return path, nil
 	}
 
-	pwd, err := os.Getwd()
+	configDir, err := configDirPath()
 	if err != nil {
 		return "", err
 	}
 
-	return filepath.Join(pwd, stateFilename), nil
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return "", err
+	}
+
+	return filepath.Join(configDir, stateFilename), nil
+}
+
+func configDirPath() (string, error) {
+	home, err := homedir.Dir()
+	if err != nil {
+		return home, err
+	}
+	return filepath.Join(home, ".config", "wnfs"), nil
 }
 
 type ExternalState struct {
@@ -33,6 +47,7 @@ func LoadOrCreateExternalState(path string) (*ExternalState, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			fmt.Printf("creating external state file: %q\n", path)
 			s := &ExternalState{path: path}
 			err = s.Write()
 			return s, err

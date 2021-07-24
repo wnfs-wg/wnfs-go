@@ -19,6 +19,7 @@ require (
 	github.com/libp2p/go-libp2p v0.14.2
 	github.com/libp2p/go-libp2p-core v0.8.5
 	github.com/libp2p/go-libp2p-peerstore v0.2.7
+	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.4.1
 	github.com/multiformats/go-multihash v0.0.15
 	github.com/qri-io/qfs v0.6.0

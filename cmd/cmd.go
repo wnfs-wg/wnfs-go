@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ipfs/go-cid"
 	golog "github.com/ipfs/go-log"
@@ -14,8 +15,28 @@ import (
 )
 
 func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
+	ipfsPath := os.Getenv("IPFS_PATH")
+	if ipfsPath == "" {
+		dir, err := configDirPath()
+		if err != nil {
+			errExit("error: getting configuration directory: %s\n", err)
+		}
+		ipfsPath = filepath.Join(dir, "ipfs")
+
+		if _, err := os.Stat(filepath.Join(ipfsPath, "config")); os.IsNotExist(err) {
+			if err := os.MkdirAll(ipfsPath, 0755); err != nil {
+				errExit("error: creating ipfs repo: %s\n", err)
+			}
+			fmt.Printf("creating ipfs repo at %s ... ", ipfsPath)
+			if err = wnipfs.InitRepo(ipfsPath, ""); err != nil {
+				errExit("\nerror: %s", err)
+			}
+			fmt.Println("done")
+		}
+	}
+
 	store, err := wnipfs.NewFilesystem(ctx, map[string]interface{}{
-		"path": os.Getenv("IPFS_PATH"),
+		"path": ipfsPath,
 	})
 
 	if err != nil {

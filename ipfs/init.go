@@ -35,11 +35,11 @@ This could mean that an ipfs daemon is running. please stop it before running th
 // it's adapted to let qri initialize a repo. This func should be maintained to reflect the
 // ipfs master branch.
 func InitRepo(repoPath, configPath string) error {
-	if daemonLocked, err := fsrepo.LockedByOtherProcess(repoPath); err != nil {
-		return err
-	} else if daemonLocked {
-		return errRepoLock
-	}
+	// if daemonLocked, err := fsrepo.LockedByOtherProcess(repoPath); err != nil {
+	// 	return err
+	// } else if daemonLocked {
+	// 	return errRepoLock
+	// }
 
 	var conf *config.Config
 	if configPath != "" {
