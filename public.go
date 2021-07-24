@@ -91,6 +91,7 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 	return &PublicTree{
 		fs:   fs,
 		name: name,
+		size: header.Size(),
 
 		cid:      header.Cid(),
 		metadata: md,
@@ -324,6 +325,7 @@ func (t *PublicTree) Put() (putResult, error) {
 
 func (t *PublicTree) writeHeader(links mdstore.Links) (putResult, error) {
 	store := t.fs.DagStore()
+
 	if !t.cid.Equals(cid.Cid{}) {
 		// TODO(b5): incorrect
 		n, err := store.GetNode(t.cid)
@@ -456,6 +458,7 @@ func loadPublicFileFromCID(fs merkleDagFS, id cid.Cid, name string) (*PublicFile
 		fs:   fs,
 		cid:  id,
 		name: name,
+		size: header.Size(),
 
 		metadata: md,
 		previous: previous,
@@ -504,6 +507,13 @@ func (f *PublicFile) SetContents(r io.ReadCloser) {
 
 func (f *PublicFile) Put() (putResult, error) {
 	store := f.fs.DagStore()
+
+	userlandRes, err := store.PutFile(&BareFile{content: f.content})
+	if err != nil {
+		return putResult{}, fmt.Errorf("putting file %q in store: %w", f.name, err)
+	}
+	links := mdstore.NewLinks(userlandRes.ToLink(userlandLinkName, true))
+
 	buf, err := encodeCBOR(f.metadata, nil)
 	if err != nil {
 		return putResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
@@ -512,18 +522,13 @@ func (f *PublicFile) Put() (putResult, error) {
 	if err != nil {
 		return putResult{}, err
 	}
-	links := mdstore.NewLinks(mdstore.Link{
+
+	links.Add(mdstore.Link{
 		Name:   metadataLinkName,
 		Cid:    metadataCid,
 		Size:   int64(buf.Len()),
 		IsFile: false, // TODO (b5): not sure?
 	})
-
-	userlandRes, err := store.PutFile(&BareFile{content: f.content})
-	if err != nil {
-		return putResult{}, fmt.Errorf("putting file %q in store: %w", f.name, err)
-	}
-	links.Add(userlandRes.ToLink(userlandLinkName, true))
 
 	if !f.cid.Equals(cid.Cid{}) {
 		links.Add(mdstore.Link{

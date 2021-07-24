@@ -51,16 +51,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fs, state := open(ctx)
-
-	updateExternalState := func() {
-		state.RootCID = fs.(mdstore.DagNode).Cid()
-		fmt.Printf("writing root cid: %s...", state.RootCID)
-		if err := state.Write(); err != nil {
-			errExit("error: writing external state: %s\n", err)
-		}
-		fmt.Println("done")
-	}
+	var (
+		fs                  wnfs.WNFS
+		state               *ExternalState
+		updateExternalState func()
+	)
 
 	app := &cli.App{
 		Flags: []cli.Flag{
@@ -74,6 +69,17 @@ func main() {
 			if c.Bool("verbose") {
 				golog.SetLogLevel("wnfs", "debug")
 			}
+
+			fs, state = open(ctx)
+			updateExternalState = func() {
+				state.RootCID = fs.(mdstore.DagNode).Cid()
+				fmt.Printf("writing root cid: %s...", state.RootCID)
+				if err := state.Write(); err != nil {
+					errExit("error: writing external state: %s\n", err)
+				}
+				fmt.Println("done")
+			}
+
 			return nil
 		},
 		Commands: []*cli.Command{

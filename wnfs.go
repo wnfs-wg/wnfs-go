@@ -100,6 +100,7 @@ func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore) (WNFS, err
 }
 
 func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid) (WNFS, error) {
+	log.Debugw("FromCID", "cid", id)
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: dagStore,

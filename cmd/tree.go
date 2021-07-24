@@ -2,9 +2,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 
+	"github.com/dustin/go-humanize"
 	"github.com/xlab/treeprint"
 )
 
@@ -63,7 +65,7 @@ func fileTree(fsys fs.FS, path string, f fs.File) (interface{}, error) {
 	readDirFile, ok := f.(fs.ReadDirFile)
 	if !ok {
 		// if it's a file return a rooted single file name
-		return fi.Name(), nil
+		return fileTreeString(fi), nil
 	}
 
 	dir, error := readDirFile.ReadDir(-1)
@@ -94,6 +96,10 @@ func fileTree(fsys fs.FS, path string, f fs.File) (interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		fi.Name(): tree,
+		fileTreeString(fi): tree,
 	}, nil
+}
+
+func fileTreeString(fi fs.FileInfo) string {
+	return fmt.Sprintf("%s | %s", fi.Name(), humanize.Bytes(uint64(fi.Size())))
 }

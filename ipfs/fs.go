@@ -22,7 +22,7 @@ import (
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
 	format "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log"
-	merkledag "github.com/ipfs/go-merkledag"
+	unixfs "github.com/ipfs/go-unixfs"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
@@ -171,7 +171,9 @@ func (fs *Filestore) GetNode(id cid.Cid, path ...string) (mdstore.DagNode, error
 }
 
 func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
-	node := &merkledag.ProtoNode{}
+	node := unixfs.EmptyDirNode()
+	// node := &merkledag.ProtoNode{}
+	// node.SetData(unixfs.FolderPBData())
 	node.SetCidBuilder(cid.V1Builder{
 		Codec:    cid.DagProtobuf,
 		MhType:   multihash.SHA2_256,
@@ -181,8 +183,17 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 		node.AddRawLink(name, lnk.IPLD())
 	}
 	err := fs.capi.Dag().Add(fs.ctx, node)
+	if err != nil {
+		return mdstore.PutResult{}, err
+	}
+	size, err := node.Size()
+	if err != nil {
+		return mdstore.PutResult{}, err
+	}
+
 	return mdstore.PutResult{
-		Cid: node.Cid(),
+		Cid:  node.Cid(),
+		Size: int64(size),
 	}, err
 }
 
@@ -198,28 +209,6 @@ func (fs *Filestore) PutBlock(d []byte) (id cid.Cid, err error) {
 	return bs.Path().Root(), nil
 }
 
-// func (fs *Filestore) PutDir(links mdstore.Links) (mdstore.PutResult, error) {
-// 	// &merkledag.ProtoNode{}
-// 	// entries := make(map[string]files.Node, 0, links.Len())
-// 	// for name, val := range links.Map() {
-// 	// }
-// 	// dir := files.NewMapDirectory(f map[string]files.Node)
-// 	// fs.capi.Unixfs().Add(fs.ctx, dir, caopts.Unixfs.CidVersion(1))
-
-// 	node := &merkledag.ProtoNode{}
-// 	node.SetCidBuilder(cid.V1Builder{})
-// 	for name, lnk := range links.Map() {
-// 		node.AddRawLink(name, lnk.IPLD())
-// 	}
-// 	err := fs.capi.Dag().Add(fs.ctx, node)
-// 	// fs.capi.Unixfs().Add(context.Context, files.Node, ...caopts.UnixfsAddOption)
-// 	return mdstore.PutResult{}, errors.New("unfinished: ipfs.Filestore.PutDir")
-// }
-
-// func (fs *Filestore) GetDir(id cid.Cid, path ...string) (mdstore.Links, error) {
-// 	return mdstore.NewLinks(), errors.New("unfinished: ipfs.Filestore.GetDir")
-// }
-
 func (fs *Filestore) PutFile(f fs.File) (mdstore.PutResult, error) {
 	// TODO(b5): wire up a size reader
 	path, err := fs.capi.Unixfs().Add(fs.ctx, files.NewReaderFile(f), caopts.Unixfs.CidVersion(1))
@@ -227,9 +216,19 @@ func (fs *Filestore) PutFile(f fs.File) (mdstore.PutResult, error) {
 		return mdstore.PutResult{}, err
 	}
 
+	storedFile, err := fs.capi.Unixfs().Get(fs.ctx, path)
+	if err != nil {
+		return mdstore.PutResult{}, err
+	}
+
+	size, err := storedFile.Size()
+	if err != nil {
+		return mdstore.PutResult{}, err
+	}
+
 	return mdstore.PutResult{
 		Cid:  path.Root(),
-		Size: 0,
+		Size: size,
 	}, nil
 }
 
