@@ -29,8 +29,25 @@ type SemVer string
 type UnixMeta struct {
 	Mtime int64
 	Ctime int64
-	Mode  fs.FileMode
+	Mode  uint32
 	Type  string
+}
+
+func NewUnixMeta(isFile bool) *UnixMeta {
+	ts := Timestamp().Unix()
+	mode := 644
+	t := unixNodeTypeFile
+	if !isFile {
+		mode = 755
+		t = unixNodeTypeDirectory
+	}
+
+	return &UnixMeta{
+		Mtime: ts,
+		Ctime: ts,
+		Mode:  uint32(mode),
+		Type:  t,
+	}
 }
 
 type Metadata struct {

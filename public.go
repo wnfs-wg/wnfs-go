@@ -25,19 +25,14 @@ type PublicTree struct {
 }
 
 func newEmptyPublicTree(fs merkleDagFS, name string) *PublicTree {
-	now := Timestamp().Unix()
-
 	return &PublicTree{
 		fs:   fs,
 		name: name,
 
 		userland: mdstore.NewLinks(),
 		metadata: &Metadata{
-			UnixMeta: &UnixMeta{
-				Ctime: now,
-				Mtime: now,
-			},
-			Version: LatestVersion,
+			UnixMeta: NewUnixMeta(false),
+			Version:  LatestVersion,
 		},
 		skeleton: Skeleton{},
 	}
@@ -409,19 +404,15 @@ var (
 )
 
 func newEmptyPublicFile(fs merkleDagFS, name string, content io.ReadCloser) *PublicFile {
-	now := Timestamp().Unix()
 	return &PublicFile{
 		fs:      fs,
 		name:    name,
 		content: content,
 
 		metadata: &Metadata{
-			UnixMeta: &UnixMeta{
-				Ctime: now,
-				Mtime: now,
-			},
-			IsFile:  true,
-			Version: LatestVersion,
+			UnixMeta: NewUnixMeta(true),
+			IsFile:   true,
+			Version:  LatestVersion,
 		},
 	}
 }
@@ -496,8 +487,8 @@ func (f *PublicFile) Stat() (fs.FileInfo, error) {
 		size: f.size,
 		// TODO(b5):
 		// mode: f.metadata.UnixMeta.Mode,
-		// mtime: time.Unix(f.metadata.UnixMeta.Mtime, 0),
-		sys: f.fs,
+		mtime: time.Unix(f.metadata.UnixMeta.Mtime, 0),
+		sys:   f.fs,
 	}, nil
 }
 
