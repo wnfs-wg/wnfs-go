@@ -3,6 +3,7 @@ package wnfs
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -78,6 +79,19 @@ func TestWNFS(t *testing.T) {
 		}
 
 		ents, err = fsys.Ls("public")
+		if err != nil {
+			t.Error(err)
+		}
+		if len(ents) != 2 {
+			t.Errorf("expected 2 entries. got: %d", len(ents))
+		}
+
+		dfs := os.DirFS("./testdata")
+		if err := fsys.Cp("public/cats", "cats", dfs, MutationOptions{Commit: true}); err != nil {
+			t.Error(err)
+		}
+
+		ents, err = fsys.Ls("public/cats")
 		if err != nil {
 			t.Error(err)
 		}

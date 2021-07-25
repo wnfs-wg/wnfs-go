@@ -210,7 +210,6 @@ func (fs *Filestore) PutBlock(d []byte) (id cid.Cid, err error) {
 }
 
 func (fs *Filestore) PutFile(f fs.File) (mdstore.PutResult, error) {
-	// TODO(b5): wire up a size reader
 	path, err := fs.capi.Unixfs().Add(fs.ctx, files.NewReaderFile(f), caopts.Unixfs.CidVersion(1))
 	if err != nil {
 		return mdstore.PutResult{}, err

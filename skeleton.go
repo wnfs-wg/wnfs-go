@@ -34,6 +34,7 @@ func (s Skeleton) CBORFile(key *string) (fs.File, error) {
 		return nil, err
 	}
 
+	// TODO(b5): use bareFile instead?
 	return &memfile{
 		fi: &fsFileInfo{
 			name:  skeletonLinkName,

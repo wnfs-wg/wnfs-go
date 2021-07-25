@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"path/filepath"
 	"time"
 
 	cid "github.com/ipfs/go-cid"
@@ -243,6 +244,45 @@ func (t *PublicTree) Add(path Path, f fs.File) (res putResult, err error) {
 	return t.Put()
 }
 
+func (t *PublicTree) Copy(path Path, srcPathStr string, srcFS fs.FS) (res putResult, err error) {
+	log.Debugw("PublicTree.copy", "path", path, "srcPath", srcPathStr)
+	if len(path) == 0 {
+		return res, errors.New("invalid path: empty")
+	}
+
+	head, tail := path.Shift()
+	if tail == nil {
+		f, err := srcFS.Open(srcPathStr)
+		if err != nil {
+			return putResult{}, err
+		}
+
+		res, err = t.createOrUpdateChild(srcPathStr, head, f, srcFS)
+		if err != nil {
+			return res, err
+		}
+	} else {
+		childDir, err := t.getOrCreateDirectChildTree(head)
+		if err != nil {
+			return res, err
+		}
+
+		// recurse
+		res, err = childDir.Copy(tail, srcPathStr, srcFS)
+		if err != nil {
+			return res, err
+		}
+	}
+
+	t.updateUserlandLink(head, res)
+	// contents of tree have changed, write an update.
+	// TODO(b5) - pretty sure this is a bug if multiple writes are batched in the
+	// same "publish" / transaction. Write advances the previous / current CID,
+	// so if the same directory is mutated multiple times before the next snapshot
+	// we'll have intermediate states as the "previous" pointer
+	return t.Put()
+}
+
 func (t *PublicTree) Rm(path Path) (putResult, error) {
 	head, tail := path.Shift()
 	if head == "" {
@@ -356,6 +396,47 @@ func (t *PublicTree) getOrCreateDirectChildTree(name string) (*PublicTree, error
 	}
 
 	return loadTreeFromCID(t.fs, name, link.Cid)
+}
+
+func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (putResult, error) {
+	fi, err := f.Stat()
+	if err != nil {
+		return putResult{}, err
+	}
+	if fi.IsDir() {
+		return t.createOrUpdateChildDirectory(srcPathStr, name, f, srcFS)
+	}
+	return t.createOrUpdateChildFile(name, f)
+}
+
+func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (putResult, error) {
+	dir, ok := f.(fs.ReadDirFile)
+	if !ok {
+		return putResult{}, fmt.Errorf("cannot read directory contents")
+	}
+	ents, err := dir.ReadDir(-1)
+	if err != nil {
+		return putResult{}, fmt.Errorf("reading directory contents: %w", err)
+	}
+
+	var tree *PublicTree
+	if link := t.userland.Get(name); link != nil {
+		tree, err = loadTreeFromCID(t.fs, name, link.Cid)
+		if err != nil {
+			return putResult{}, err
+		}
+	} else {
+		tree = newEmptyPublicTree(t.fs, name)
+	}
+
+	var res putResult
+	for _, ent := range ents {
+		res, err = tree.Copy(Path{ent.Name()}, filepath.Join(srcPathStr, ent.Name()), srcFS)
+		if err != nil {
+			return putResult{}, err
+		}
+	}
+	return res, nil
 }
 
 func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (putResult, error) {

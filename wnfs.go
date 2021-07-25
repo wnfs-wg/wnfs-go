@@ -53,11 +53,13 @@ type PosixTree interface {
 
 	// general
 	// Mv(from, to string) error
+	Cp(pathStr, srcPathStr string, src fs.FS, opts ...MutationOptions) error
 	Rm(pathStr string, opts ...MutationOptions) error
 }
 
 type MutationOptions struct {
-	Commit bool
+	SourceFS fs.FS
+	Commit   bool
 }
 
 func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
@@ -214,17 +216,39 @@ func (fsys *fileSystem) Cat(pathStr string) ([]byte, error) {
 	return ioutil.ReadAll(f)
 }
 
+func (fsys *fileSystem) Cp(pathStr, srcPath string, src fs.FS, opts ...MutationOptions) error {
+	log.Debugw("fileSystem.Cp", "pathStr", pathStr, "srcPath", srcPath)
+	opt := MutationOptions{}.assign(opts)
+
+	node, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
+	if err != nil {
+		return err
+	}
+
+	if _, err := node.Copy(relPath, srcPath, src); err != nil {
+		return err
+	}
+
+	if opt.Commit {
+		_, err := fsys.root.Put()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (fsys *fileSystem) Write(pathStr string, f fs.File, opts ...MutationOptions) error {
 	log.Debugw("fileSystem.Write", "pathStr", pathStr)
 	opt := MutationOptions{}.assign(opts)
 
-	// fi, err := f.Stat()
-	// if err != nil {
-	// 	return err
-	// }
-	// if fi.IsDir() {
-	// 	return errors.New("write only accepts file paths")
-	// }
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.IsDir() {
+		return errors.New("write only accepts files")
+	}
 
 	node, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
@@ -302,6 +326,10 @@ func NewPath(posix string) (Path, error) {
 	return strings.Split(posix, "/"), nil
 }
 
+func (p Path) String() string {
+	return strings.Join(p, "/")
+}
+
 func (p Path) Shift() (head string, ch Path) {
 	switch len(p) {
 	case 0:
@@ -322,6 +350,7 @@ type Tree interface {
 	IsFile() bool
 	Get(path Path) (fs.File, error)
 	Add(path Path, f fs.File) (putResult, error)
+	Copy(path Path, srcPath string, src fs.FS) (putResult, error)
 	Rm(path Path) (putResult, error)
 	Mkdir(path Path) (putResult, error)
 }
