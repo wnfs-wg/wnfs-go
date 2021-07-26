@@ -145,6 +145,26 @@ func main() {
 				},
 			},
 			{
+				Name:    "copy",
+				Aliases: []string{"cp"},
+				Usage:   "copy a file or directory into wnfs",
+				Action: func(c *cli.Context) error {
+					wnfsPath := c.Args().Get(0)
+					localPath, err := filepath.Abs(c.Args().Get(1))
+					if err != nil {
+						return err
+					}
+
+					localFS := os.DirFS(filepath.Dir(localPath))
+					path := filepath.Base(localPath)
+
+					defer updateExternalState()
+					return fs.Cp(wnfsPath, path, localFS, wnfs.MutationOptions{
+						Commit: true,
+					})
+				},
+			},
+			{
 				Name:  "ls",
 				Usage: "list the contents of a directory",
 				Action: func(c *cli.Context) error {
