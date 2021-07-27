@@ -3,8 +3,13 @@ package wnfs
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"math/rand"
 
 	"github.com/google/go-cmp/cmp"
 	golog "github.com/ipfs/go-log"
@@ -124,5 +129,169 @@ func TestPath(t *testing.T) {
 	}
 	if tail != nil {
 		t.Errorf("expected tail to equal nil. got: %v", tail)
+	}
+}
+
+func BenchmarkPublicCat10MbFile(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	fsys.Write("public/bench.txt", textFile, MutationOptions{
+		Commit: true,
+	})
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		if _, err := fsys.Cat("public/bench.txt"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPublicWrite10MbFile(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		fsys.Write("public/bench.txt", textFile, MutationOptions{
+			Commit: true,
+		})
+	}
+}
+
+func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	fsys.Write("public/subdir/bench.txt", textFile, MutationOptions{
+		Commit: true,
+	})
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		if _, err := fsys.Cat("public/subdir/bench.txt"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		fsys.Write("public/subdir/bench.txt", textFile, MutationOptions{
+			Commit: true,
+		})
+	}
+}
+
+func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir, err := ioutil.TempDir("", "bench_10_single_file_directories")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	for i := 0; i < 10; i++ {
+		path := filepath.Join(dir, "copy_me", fmt.Sprintf("dir_%d", i))
+		os.MkdirAll(path, 0755)
+		path = filepath.Join(path, "bench.txt")
+
+		data := make([]byte, 1024*10)
+		if _, err := rand.Read(data); err != nil {
+			t.Fatal(err)
+		}
+		ioutil.WriteFile(path, data, os.ModePerm)
+	}
+
+	dirFS := os.DirFS(dir)
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		fsys.Cp("public/copy_me", "copy_me", dirFS, MutationOptions{
+			Commit: true,
+		})
+	}
+
+	if _, err := fsys.Open("public/copy_me/dir_0/bench.txt"); err != nil {
+		t.Fatal(err)
 	}
 }
