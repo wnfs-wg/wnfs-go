@@ -61,7 +61,7 @@ func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
 		fmt.Println("done")
 	} else {
 		if fs, err = wnfs.FromCID(ctx, store, state.RootCID); err != nil {
-			errExit("error: opening WNFS CID %s: %s\n", state.RootCID, err.Error())
+			errExit("error: opening WNFS CID %s:\n%s\n", state.RootCID, err.Error())
 		}
 	}
 

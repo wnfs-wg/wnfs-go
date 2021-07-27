@@ -110,7 +110,7 @@ func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid) (
 
 	root, err := newRootTreeFromCID(fs, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening root tree %s:\n%w", id, err)
 	}
 
 	fs.root = root
@@ -386,7 +386,7 @@ func newEmptyRootTree(fs merkleDagFS, rootKey string) (*rootTree, error) {
 func newRootTreeFromCID(fs merkleDagFS, id cid.Cid) (*rootTree, error) {
 	node, err := fs.DagStore().GetNode(id)
 	if err != nil {
-		return nil, fmt.Errorf("loading header block %q: %w", id.String(), err)
+		return nil, fmt.Errorf("loading header block %q:\n%w", id.String(), err)
 	}
 
 	links := node.Links()
@@ -398,7 +398,7 @@ func newRootTreeFromCID(fs merkleDagFS, id cid.Cid) (*rootTree, error) {
 
 	public, err := loadTreeFromCID(fs, FileHierarchyNamePublic, publicLink.Cid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
 	root := &rootTree{

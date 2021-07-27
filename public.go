@@ -44,30 +44,30 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 	store := fs.DagStore()
 	header, err := store.GetNode(id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading header node %s:\n%w", id, err)
 	}
 
 	links := header.Links()
 
 	mdLnk := links.Get(metadataLinkName)
 	if mdLnk == nil {
-		return nil, errors.New("header is missing 'metadata' link")
+		return nil, fmt.Errorf("header is missing %s link", metadataLinkName)
 	}
 	md, err := loadMetadata(store, mdLnk.Cid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading %s data %s:\n%w", metadataLinkName, mdLnk.Cid, err)
 	}
 	if md.IsFile {
-		return nil, errors.New("expected file to be a tree")
+		return nil, fmt.Errorf("expected file to be a tree")
 	}
 
 	skLnk := links.Get(skeletonLinkName)
 	if skLnk == nil {
-		return nil, errors.New("header is missing 'skeleton' link")
+		return nil, fmt.Errorf("header is missing %s link", skeletonLinkName)
 	}
 	sk, err := loadSkeleton(store, skLnk.Cid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading %s data %s:\n%w", skeletonLinkName, skLnk.Cid, err)
 	}
 
 	var previous *cid.Cid
@@ -77,11 +77,11 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 
 	userlandLnk := links.Get(userlandLinkName)
 	if userlandLnk == nil {
-		return nil, errors.New("header is missing 'userland' link")
+		return nil, fmt.Errorf("header is missing %s link", userlandLinkName)
 	}
 	userland, err := store.GetNode(userlandLnk.Cid)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading %s data %s:\n%w", userlandLinkName, userlandLnk.Cid, err)
 	}
 
 	return &PublicTree{
