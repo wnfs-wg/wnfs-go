@@ -19,6 +19,7 @@ type MerkleDagStore interface {
 	// linked data nodes
 	GetNode(id cid.Cid, path ...string) (DagNode, error)
 	PutNode(links Links) (PutResult, error)
+	PutNodeWithData(data map[string]interface{}, links Links) (PutResult, error)
 
 	GetBlock(id cid.Cid) (r io.Reader, err error)
 	PutBlock(d []byte) (id cid.Cid, err error)

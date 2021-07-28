@@ -19,7 +19,8 @@ type PublicTree struct {
 	size int64
 
 	// header data
-	metadata *Metadata
+	metadata map[string]interface{}
+	// metadata *Metadata
 	skeleton Skeleton
 	previous *cid.Cid
 	userland mdstore.Links // links to files are stored in "userland" header key
@@ -31,9 +32,9 @@ func newEmptyPublicTree(fs merkleDagFS, name string) *PublicTree {
 		name: name,
 
 		userland: mdstore.NewLinks(),
-		metadata: &Metadata{
-			UnixMeta: NewUnixMeta(false),
-			Version:  LatestVersion,
+		metadata: map[string]interface{}{
+			"unixMeta": NewUnixMeta(false),
+			"version":  LatestVersion,
 		},
 		skeleton: Skeleton{},
 	}
@@ -48,19 +49,18 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 	}
 
 	links := header.Links()
-	log.Debugw("header links", "links", links)
 
-	mdLnk := links.Get(metadataLinkName)
-	if mdLnk == nil {
-		return nil, fmt.Errorf("header is missing %s link", metadataLinkName)
-	}
-	md, err := loadMetadata(store, mdLnk.Cid)
-	if err != nil {
-		return nil, fmt.Errorf("loading %s data %s:\n%w", metadataLinkName, mdLnk.Cid, err)
-	}
-	if md.IsFile {
-		return nil, fmt.Errorf("expected file to be a tree")
-	}
+	// mdLnk := links.Get(metadataLinkName)
+	// if mdLnk == nil {
+	// 	return nil, fmt.Errorf("header is missing %s link", metadataLinkName)
+	// }
+	// md, err := loadMetadata(store, mdLnk.Cid)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("loading %s data %s:\n%w", metadataLinkName, mdLnk.Cid, err)
+	// }
+	// if md.IsFile {
+	// 	return nil, fmt.Errorf("expected file to be a tree")
+	// }
 
 	skLnk := links.Get(skeletonLinkName)
 	if skLnk == nil {
@@ -90,8 +90,8 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 		name: name,
 		size: header.Size(),
 
-		cid:      header.Cid(),
-		metadata: md,
+		cid: header.Cid(),
+		// metadata: md,
 		skeleton: sk,
 		previous: previous,
 		userland: userland.Links(),
@@ -119,7 +119,7 @@ func (t *PublicTree) Stat() (fs.FileInfo, error) {
 		// TODO (b5):
 		// mode:  t.metadata.UnixMeta.Mode,
 		mode:  fs.ModeDir,
-		mtime: time.Unix(t.metadata.UnixMeta.Mtime, 0),
+		mtime: time.Unix(int64(t.metadata["unixMeta"].(map[string]interface{})["mtime"].(int)), 0),
 		sys:   t.fs,
 	}, nil
 }
@@ -153,7 +153,7 @@ func (t *PublicTree) ReadDir(n int) ([]fs.DirEntry, error) {
 func (t *PublicTree) Header() TreeHeader {
 	// TODO(b5): finish
 	return &treeInfo{
-		metadata: *t.metadata,
+		// metadata: *t.metadata,
 	}
 }
 
@@ -171,7 +171,7 @@ func (t *PublicTree) Get(path Path) (fs.File, error) {
 	if tail != nil {
 		ch, err := loadTreeFromCID(t.fs, head, link.Cid)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("loading tree %q %s:\n%s", head, link.Cid, err)
 		}
 
 		// recurse
@@ -328,7 +328,7 @@ func (t *PublicTree) Put() (putResult, error) {
 	links := mdstore.NewLinks(userlandResult.ToLink(userlandLinkName, false))
 
 	for _, filer := range []CBORFiler{
-		t.metadata,
+		// t.metadata,
 		t.skeleton,
 	} {
 		file, err := filer.CBORFile(nil)
@@ -345,6 +345,7 @@ func (t *PublicTree) Put() (putResult, error) {
 		if err != nil {
 			return putResult{}, err
 		}
+		log.Debugw("skeleton link", "cid", res.Cid, "size", res.Size)
 
 		links.Add(res.ToLink(linkName, true))
 	}
@@ -376,15 +377,17 @@ func (t *PublicTree) writeHeader(links mdstore.Links) (putResult, error) {
 		})
 	}
 
-	headerNode, err := store.PutNode(links)
+	headerNode, err := store.PutNodeWithData(map[string]interface{}{
+		metadataLinkName: t.metadata,
+	}, links)
 	if err != nil {
 		return putResult{}, err
 	}
 
 	return putResult{
-		Cid:      headerNode.Cid,
-		Size:     headerNode.Size,
-		Metadata: links.Get(metadataLinkName).Cid,
+		Cid:  headerNode.Cid,
+		Size: headerNode.Size,
+		// Metadata: links.Get(metadataLinkName).Cid,
 		Userland: links.Get(userlandLinkName).Cid,
 		Skeleton: t.skeleton,
 	}, nil
@@ -458,13 +461,13 @@ func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (putResult,
 func (t *PublicTree) updateUserlandLink(name string, res putResult) {
 	t.userland.Add(res.ToLink(name))
 	t.skeleton[name] = res.ToSkeletonInfo()
-	t.metadata.UnixMeta.Mtime = Timestamp().Unix()
+	// t.metadata["unixMeta"].(map[string]interface{})["mtime"] = Timestamp().Unix()
 }
 
 func (t *PublicTree) removeUserlandLink(name string) {
 	t.userland.Remove(name)
 	delete(t.skeleton, name)
-	t.metadata.UnixMeta.Mtime = Timestamp().Unix()
+	// t.metadata["unixMeta"].(map[string]interface{})["mtime"] = Timestamp().Unix()
 }
 
 type PublicFile struct {
@@ -473,7 +476,7 @@ type PublicFile struct {
 	cid  cid.Cid
 	size int64
 
-	metadata *Metadata
+	metadata map[string]interface{}
 	previous *cid.Cid
 	userland cid.Cid
 
@@ -491,10 +494,10 @@ func newEmptyPublicFile(fs merkleDagFS, name string, content io.ReadCloser) *Pub
 		name:    name,
 		content: content,
 
-		metadata: &Metadata{
-			UnixMeta: NewUnixMeta(true),
-			IsFile:   true,
-			Version:  LatestVersion,
+		metadata: map[string]interface{}{
+			"unixMeta": NewUnixMeta(true),
+			"isFile":   true,
+			"version":  LatestVersion,
 		},
 	}
 }
@@ -508,14 +511,14 @@ func loadPublicFileFromCID(fs merkleDagFS, id cid.Cid, name string) (*PublicFile
 
 	links := header.Links()
 
-	mdLink := links.Get(metadataLinkName)
-	if mdLink == nil {
-		return nil, errors.New("header is missing 'metadata' link")
-	}
-	md, err := loadMetadata(store, mdLink.Cid)
-	if err != nil {
-		return nil, err
-	}
+	// mdLink := links.Get(metadataLinkName)
+	// if mdLink == nil {
+	// 	return nil, errors.New("header is missing 'metadata' link")
+	// }
+	// md, err := loadMetadata(store, mdLink.Cid)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	userlandLink := links.Get(userlandLinkName)
 	if userlandLink == nil {
@@ -533,7 +536,7 @@ func loadPublicFileFromCID(fs merkleDagFS, id cid.Cid, name string) (*PublicFile
 		name: name,
 		size: header.Size(),
 
-		metadata: md,
+		// metadata: md,
 		previous: previous,
 		userland: userlandLink.Cid,
 	}, nil
@@ -569,7 +572,7 @@ func (f *PublicFile) Stat() (fs.FileInfo, error) {
 		size: f.size,
 		// TODO(b5):
 		// mode: f.metadata.UnixMeta.Mode,
-		mtime: time.Unix(f.metadata.UnixMeta.Mtime, 0),
+		mtime: time.Unix(int64(f.metadata["unixMeta"].(map[string]interface{})["mtime"].(int)), 0),
 		sys:   f.fs,
 	}, nil
 }
@@ -587,21 +590,21 @@ func (f *PublicFile) Put() (putResult, error) {
 	}
 	links := mdstore.NewLinks(userlandRes.ToLink(userlandLinkName, true))
 
-	buf, err := encodeCBOR(f.metadata, nil)
-	if err != nil {
-		return putResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
-	}
-	metadataCid, err := store.PutBlock(buf.Bytes())
-	if err != nil {
-		return putResult{}, err
-	}
+	// buf, err := encodeCBOR(f.metadata, nil)
+	// if err != nil {
+	// 	return putResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
+	// }
+	// metadataCid, err := store.PutBlock(buf.Bytes())
+	// if err != nil {
+	// 	return putResult{}, err
+	// }
 
-	links.Add(mdstore.Link{
-		Name:   metadataLinkName,
-		Cid:    metadataCid,
-		Size:   int64(buf.Len()),
-		IsFile: false, // TODO (b5): not sure?
-	})
+	// links.Add(mdstore.Link{
+	// 	Name:   metadataLinkName,
+	// 	Cid:    metadataCid,
+	// 	Size:   int64(buf.Len()),
+	// 	IsFile: false, // TODO (b5): not sure?
+	// })
 
 	if !f.cid.Equals(cid.Cid{}) {
 		links.Add(mdstore.Link{
@@ -611,7 +614,9 @@ func (f *PublicFile) Put() (putResult, error) {
 	}
 
 	// write header node
-	res, err := store.PutNode(links)
+	res, err := store.PutNodeWithData(map[string]interface{}{
+		metadataLinkName: f.metadata,
+	}, links)
 	if err != nil {
 		return putResult{}, err
 	}
@@ -625,7 +630,7 @@ func (f *PublicFile) Put() (putResult, error) {
 		Cid: res.Cid,
 		// TODO(b5)
 		// Size: f.Size(),
-		Metadata: metadataCid,
+		// Metadata: metadataCid,
 		Userland: userlandRes.Cid,
 		IsFile:   true,
 	}, nil
@@ -654,8 +659,8 @@ func (r putResult) ToLink(name string) mdstore.Link {
 
 func (r putResult) ToSkeletonInfo() SkeletonInfo {
 	return SkeletonInfo{
-		Cid:         r.Cid,
-		Metadata:    r.Metadata,
+		Cid: r.Cid,
+		// Metadata:    r.Metadata,
 		Userland:    r.Userland,
 		SubSkeleton: r.Skeleton,
 		IsFile:      r.IsFile,

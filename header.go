@@ -33,7 +33,7 @@ type UnixMeta struct {
 	Type  string
 }
 
-func NewUnixMeta(isFile bool) *UnixMeta {
+func NewUnixMeta(isFile bool) map[string]interface{} {
 	ts := Timestamp().Unix()
 	mode := 644
 	t := unixNodeTypeFile
@@ -42,11 +42,11 @@ func NewUnixMeta(isFile bool) *UnixMeta {
 		t = unixNodeTypeDirectory
 	}
 
-	return &UnixMeta{
-		Mtime: ts,
-		Ctime: ts,
-		Mode:  uint32(mode),
-		Type:  t,
+	return map[string]interface{}{
+		"mtime": ts,
+		"ctime": ts,
+		"mode":  uint32(mode),
+		"type":  t,
 	}
 }
 

@@ -180,7 +180,7 @@ func (fs *Filestore) GetNode(id cid.Cid, path ...string) (mdstore.DagNode, error
 	}, nil
 }
 
-func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
+func (fs *Filestore) PutNodeWithData(obj map[string]interface{}, links mdstore.Links) (mdstore.PutResult, error) {
 	// node := unixfs.EmptyDirNode()
 	// node := &merkledag.ProtoNode{}
 	// node.SetData(unixfs.FolderPBData())
@@ -191,7 +191,6 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 	// })
 
 	// Make an object
-	obj := map[string]interface{}{}
 	for name, lnk := range links.Map() {
 		obj[name] = lnk.IPLD().Cid
 		// node.AddRawLink(name, lnk.IPLD())
@@ -212,6 +211,8 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 		return mdstore.PutResult{}, err
 	}
 
+	// fmt.Printf("%x\n", node.RawData())
+
 	err = fs.capi.Dag().Add(fs.ctx, node)
 	if err != nil {
 		return mdstore.PutResult{}, err
@@ -227,12 +228,17 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 	}, err
 }
 
+func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
+	obj := map[string]interface{}{}
+	return fs.PutNodeWithData(obj, links)
+}
+
 func (fs *Filestore) GetBlock(id cid.Cid) (io.Reader, error) {
-	return fs.capi.Block().Get(fs.ctx, corepath.IpfsPath(id))
+	return fs.capi.Block().Get(fs.ctx, corepath.IpldPath(id))
 }
 
 func (fs *Filestore) PutBlock(d []byte) (id cid.Cid, err error) {
-	bs, err := fs.capi.Block().Put(fs.ctx, bytes.NewBuffer(d), caopts.Block.Format("raw"))
+	bs, err := fs.capi.Block().Put(fs.ctx, bytes.NewBuffer(d), caopts.Block.Hash(multihash.SHA1, -1), caopts.Block.Format("raw"))
 	if err != nil {
 		return cid.Cid{}, err
 	}

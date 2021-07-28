@@ -211,7 +211,7 @@ func (fsys *fileSystem) Open(pathStr string) (fs.File, error) {
 func (fsys *fileSystem) Cat(pathStr string) ([]byte, error) {
 	f, err := fsys.Open(pathStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening %s:\n%w", pathStr, err)
 	}
 	return ioutil.ReadAll(f)
 }
