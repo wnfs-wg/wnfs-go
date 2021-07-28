@@ -1,0 +1,12 @@
+go test -bench=. -run XXX -benchmem -benchtime 5s
+goos: darwin
+goarch: amd64
+pkg: github.com/qri-io/wnfs-go
+cpu: Intel(R) Core(TM) i7-6567U CPU @ 3.30GHz
+BenchmarkPublicCat10MbFile-4                          	  151524	     40457 ns/op	   53881 B/op	     117 allocs/op
+BenchmarkPublicWrite10MbFile-4                        	   24774	    251295 ns/op	   62286 B/op	    1139 allocs/op
+BenchmarkPublicCat10MbFileSubdir-4                    	   87351	     71086 ns/op	   62898 B/op	     266 allocs/op
+BenchmarkPublicWrite10MbFileSubdir-4                  	   12292	    452925 ns/op	  103107 B/op	    1854 allocs/op
+BenchmarkPublicCp10DirectoriesWithOne10MbFileEach-4   	 2108616	      3000 ns/op	     660 B/op	      12 allocs/op
+PASS
+ok  	github.com/qri-io/wnfs-go	50.455s
