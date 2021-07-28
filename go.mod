@@ -2,6 +2,8 @@ module github.com/qri-io/wnfs-go
 
 go 1.16
 
+replace github.com/ipfs/go-ipld-cbor => ./go-ipld-cbor
+
 require (
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.3.0
@@ -11,6 +13,7 @@ require (
 	github.com/ipfs/go-ipfs v0.9.0
 	github.com/ipfs/go-ipfs-config v0.14.0
 	github.com/ipfs/go-ipfs-files v0.0.8
+	github.com/ipfs/go-ipld-cbor v0.0.5 // indirect
 	github.com/ipfs/go-ipld-format v0.2.0
 	github.com/ipfs/go-log v1.0.5
 	github.com/ipfs/go-merkledag v0.3.2

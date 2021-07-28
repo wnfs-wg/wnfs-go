@@ -48,6 +48,7 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 	}
 
 	links := header.Links()
+	log.Debugw("header links", "links", links)
 
 	mdLnk := links.Get(metadataLinkName)
 	if mdLnk == nil {

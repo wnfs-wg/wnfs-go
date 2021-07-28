@@ -14,15 +14,15 @@ import (
 	ipfs_config "github.com/ipfs/go-ipfs-config"
 	files "github.com/ipfs/go-ipfs-files"
 	ipfs_commands "github.com/ipfs/go-ipfs/commands"
-	core "github.com/ipfs/go-ipfs/core"
+	"github.com/ipfs/go-ipfs/core"
 	ipfs_core "github.com/ipfs/go-ipfs/core"
 	coreapi "github.com/ipfs/go-ipfs/core/coreapi"
 	ipfs_corehttp "github.com/ipfs/go-ipfs/core/corehttp"
 	ipfsrepo "github.com/ipfs/go-ipfs/repo"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
+	cbor "github.com/ipfs/go-ipld-cbor"
 	format "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log"
-	unixfs "github.com/ipfs/go-unixfs"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
@@ -163,26 +163,56 @@ func (fs *Filestore) GetNode(id cid.Cid, path ...string) (mdstore.DagNode, error
 		return nil, err
 	}
 
+	links := mdstore.NewLinks()
+	for _, link := range node.Links() {
+		links.Add(mdstore.Link{
+			Name: link.Name,
+			Cid:  link.Cid,
+			Size: int64(link.Size),
+		})
+	}
+
 	return &ipfsDagNode{
-		id:   id,
-		size: int64(size),
-		node: node,
+		id:    id,
+		size:  int64(size),
+		node:  node,
+		links: links,
 	}, nil
 }
 
 func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
-	node := unixfs.EmptyDirNode()
+	// node := unixfs.EmptyDirNode()
 	// node := &merkledag.ProtoNode{}
 	// node.SetData(unixfs.FolderPBData())
-	node.SetCidBuilder(cid.V1Builder{
-		Codec:    cid.DagProtobuf,
-		MhType:   multihash.SHA2_256,
-		MhLength: -1,
-	})
+	// node.SetCidBuilder(cid.V1Builder{
+	// 	Codec:    cid.DagProtobuf,
+	// 	MhType:   multihash.SHA2_256,
+	// 	MhLength: -1,
+	// })
+
+	// Make an object
+	obj := map[string]interface{}{}
 	for name, lnk := range links.Map() {
-		node.AddRawLink(name, lnk.IPLD())
+		obj[name] = lnk.IPLD().Cid
+		// node.AddRawLink(name, lnk.IPLD())
 	}
-	err := fs.capi.Dag().Add(fs.ctx, node)
+
+	// data, err := json.Marshal(obj)
+	// if err != nil {
+	// 	return mdstore.PutResult{}, err
+	// }
+
+	// Parse it into an ipldcbor node
+	// node, err := cbor.FromJSON(bytes.NewBuffer(data), multihash.SHA2_256, -1)
+	// if err != nil {
+	// 	return mdstore.PutResult{}, err
+	// }
+	node, err := cbor.WrapObject(obj, multihash.SHA2_256, -1)
+	if err != nil {
+		return mdstore.PutResult{}, err
+	}
+
+	err = fs.capi.Dag().Add(fs.ctx, node)
 	if err != nil {
 		return mdstore.PutResult{}, err
 	}
@@ -419,9 +449,10 @@ func (fs *Filestore) serveAPI() error {
 }
 
 type ipfsDagNode struct {
-	id   cid.Cid
-	size int64
-	node format.Node
+	id    cid.Cid
+	size  int64
+	node  format.Node
+	links mdstore.Links
 }
 
 var _ mdstore.DagNode = (*ipfsDagNode)(nil)
@@ -430,15 +461,7 @@ func (n ipfsDagNode) Size() int64  { return n.size }
 func (n ipfsDagNode) Cid() cid.Cid { return n.id }
 func (n ipfsDagNode) Raw() []byte  { return n.node.RawData() }
 func (n ipfsDagNode) Links() mdstore.Links {
-	links := mdstore.NewLinks()
-	for _, link := range n.node.Links() {
-		links.Add(mdstore.Link{
-			Name: link.Name,
-			Cid:  link.Cid,
-			Size: int64(link.Size),
-		})
-	}
-	return links
+	return n.links
 }
 
 type ipfsFile struct {
