@@ -8,10 +8,10 @@ import (
 )
 
 type SkeletonInfo struct {
-	Cid         cid.Cid  `json:"cid"`
-	Userland    cid.Cid  `json:"userland"`
-	Metadata    cid.Cid  `json:"metadata"`
-	SubSkeleton Skeleton `json:"subSkeleton"`
+	Cid         cid.Cid  `json:"cid,omitempty"`
+	Userland    cid.Cid  `json:"userland,omitempty"`
+	Metadata    cid.Cid  `json:"metadata,omitempty"`
+	SubSkeleton Skeleton `json:"subSkeleton,omitempty"`
 	IsFile      bool     `json:"isFile"`
 }
 
@@ -24,8 +24,7 @@ func loadSkeleton(store mdstore.MerkleDagStore, id cid.Cid) (Skeleton, error) {
 	}
 
 	sk := Skeleton{}
-	err = decodeCBOR(d, &sk)
-	return sk, err
+	return sk, decodeCBOR(d, &sk)
 }
 
 func (s Skeleton) CBORFile(key *string) (fs.File, error) {
