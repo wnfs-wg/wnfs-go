@@ -38,10 +38,12 @@ const (
 type WNFS interface {
 	fs.FS
 	fs.ReadDirFile // wnfs root is a directory file
-	PosixTree
+	PosixFS
+
+	History(pathStr string, generations int) ([]HistoryEntry, error)
 }
 
-type PosixTree interface {
+type PosixFS interface {
 	// directories (trees)
 	Ls(pathStr string) ([]fs.DirEntry, error)
 	Mkdir(pathStr string, opts ...MutationOptions) error
@@ -211,7 +213,7 @@ func (fsys *fileSystem) Open(pathStr string) (fs.File, error) {
 func (fsys *fileSystem) Cat(pathStr string) ([]byte, error) {
 	f, err := fsys.Open(pathStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening %s:\n%w", pathStr, err)
 	}
 	return ioutil.ReadAll(f)
 }
@@ -292,6 +294,24 @@ func (fsys *fileSystem) Rm(pathStr string, opts ...MutationOptions) error {
 	return nil
 }
 
+func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error) {
+	node, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
+	if err != nil {
+		return nil, err
+	}
+	f, err := node.Get(relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	fileNode, ok := f.(Node)
+	if !ok {
+		return nil, fmt.Errorf("node at %s doesn't support history", pathStr)
+	}
+
+	return history(fsys.store, fileNode, max)
+}
+
 func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir Tree, relPath Path, err error) {
 	path, err := NewPath(pathStr)
 	if err != nil {
@@ -341,22 +361,22 @@ func (p Path) Shift() (head string, ch Path) {
 	}
 }
 
-type File interface {
+type Node interface {
 	IsFile() bool
-	UpdateContent(f fs.File)
+	AsHistoryEntry() HistoryEntry
+}
+
+type File interface {
+	Node
 }
 
 type Tree interface {
-	IsFile() bool
+	Node
 	Get(path Path) (fs.File, error)
 	Add(path Path, f fs.File) (putResult, error)
 	Copy(path Path, srcPath string, src fs.FS) (putResult, error)
 	Rm(path Path) (putResult, error)
 	Mkdir(path Path) (putResult, error)
-}
-
-type Node interface {
-	IsFile() bool
 }
 
 type rootTree struct {

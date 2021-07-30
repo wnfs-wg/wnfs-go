@@ -184,6 +184,15 @@ func (t *PublicTree) Get(path Path) (fs.File, error) {
 	return loadTreeFromCID(t.fs, link.Name, link.Cid)
 }
 
+func (t *PublicTree) AsHistoryEntry() HistoryEntry {
+	return HistoryEntry{
+		Metadata: t.metadata,
+		Cid:      t.cid,
+		Previous: t.previous,
+		Size:     t.size,
+	}
+}
+
 func (t *PublicTree) Mkdir(path Path) (res putResult, err error) {
 	if len(path) < 1 {
 		return res, errors.New("invalid path: empty")
@@ -630,7 +639,13 @@ func (f *PublicFile) Put() (putResult, error) {
 	}, nil
 }
 
-type PublicHistory interface {
+func (f *PublicFile) AsHistoryEntry() HistoryEntry {
+	return HistoryEntry{
+		Cid:      f.cid,
+		Size:     f.size,
+		Metadata: f.metadata,
+		Previous: f.previous,
+	}
 }
 
 type putResult struct {
