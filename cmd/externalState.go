@@ -9,6 +9,7 @@ import (
 
 	"github.com/ipfs/go-cid"
 	"github.com/mitchellh/go-homedir"
+	"github.com/qri-io/wnfs-go"
 )
 
 const stateFilename = "wnfs-go.json"
@@ -39,8 +40,10 @@ func configDirPath() (string, error) {
 }
 
 type ExternalState struct {
-	path    string
-	RootCID cid.Cid
+	path            string
+	RootCID         cid.Cid
+	RootKey         wnfs.Key
+	PrivateRootName wnfs.PrivateName
 }
 
 func LoadOrCreateExternalState(path string) (*ExternalState, error) {
@@ -48,7 +51,10 @@ func LoadOrCreateExternalState(path string) (*ExternalState, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("creating external state file: %q\n", path)
-			s := &ExternalState{path: path}
+			s := &ExternalState{
+				path:    path,
+				RootKey: wnfs.NewKey(),
+			}
 			err = s.Write()
 			return s, err
 		}
@@ -60,6 +66,12 @@ func LoadOrCreateExternalState(path string) (*ExternalState, error) {
 		return nil, err
 	}
 	s.path = path
+	// construct a key if one doesn't exist
+	if s.RootKey.IsEmpty() {
+		fmt.Println("creating new root key")
+		s.RootKey = wnfs.NewKey()
+		return s, s.Write()
+	}
 	return s, nil
 }
 

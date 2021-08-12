@@ -67,8 +67,8 @@ func loadMetadata(store mdstore.MerkleDagStore, id cid.Cid) (*Metadata, error) {
 	return md, err
 }
 
-func (md Metadata) CBORFile(encKey *string) (fs.File, error) {
-	buf, err := encodeCBOR(md, encKey)
+func (md Metadata) CBORFile() (fs.File, error) {
+	buf, err := encodeCBOR(md)
 	if err != nil {
 		return nil, err
 	}
