@@ -49,8 +49,8 @@ func (f *BareFile) Size() int64          { return f.size }
 func (f *BareFile) Cid() cid.Cid         { return f.id }
 func (f *BareFile) Links() mdstore.Links { return mdstore.NewLinks() }
 
-func (f *BareFile) Write() (putResult, error) {
-	return putResult{}, errors.New("unifnished: BareFile.Write")
+func (f *BareFile) Write() (PutResult, error) {
+	return PutResult{}, errors.New("unifnished: BareFile.Write")
 }
 
 func (f *BareFile) Stat() (fs.FileInfo, error) {

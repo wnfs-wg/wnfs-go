@@ -25,6 +25,13 @@ type PublicTree struct {
 	userland mdstore.Links // links to files are stored in "userland" header key
 }
 
+var (
+	_ mdstore.DagNode = (*PublicTree)(nil)
+	_ Tree            = (*PublicTree)(nil)
+	_ fs.File         = (*PublicTree)(nil)
+	_ fs.ReadDirFile  = (*PublicTree)(nil)
+)
+
 func newEmptyPublicTree(fs merkleDagFS, name string) *PublicTree {
 	return &PublicTree{
 		fs:   fs,
@@ -97,14 +104,6 @@ func loadTreeFromCID(fs merkleDagFS, name string, id cid.Cid) (*PublicTree, erro
 	}, nil
 }
 
-var (
-	_ mdstore.DagNode = (*PublicTree)(nil)
-	_ Tree            = (*PublicTree)(nil)
-	_ fs.File         = (*PublicTree)(nil)
-	_ fs.ReadDirFile  = (*PublicTree)(nil)
-)
-
-func (t *PublicTree) IsFile() bool         { return false }
 func (t *PublicTree) Name() string         { return t.name }
 func (t *PublicTree) Cid() cid.Cid         { return t.cid }
 func (t *PublicTree) Size() int64          { return t.size }
@@ -193,7 +192,7 @@ func (t *PublicTree) AsHistoryEntry() HistoryEntry {
 	}
 }
 
-func (t *PublicTree) Mkdir(path Path) (res putResult, err error) {
+func (t *PublicTree) Mkdir(path Path) (res PutResult, err error) {
 	if len(path) < 1 {
 		return res, errors.New("invalid path: empty")
 	}
@@ -201,18 +200,18 @@ func (t *PublicTree) Mkdir(path Path) (res putResult, err error) {
 	head, tail := path.Shift()
 	childDir, err := t.getOrCreateDirectChildTree(head)
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 
 	if tail == nil {
 		res, err = childDir.Put()
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 	} else {
 		res, err = t.Mkdir(tail)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 	}
 
@@ -220,7 +219,7 @@ func (t *PublicTree) Mkdir(path Path) (res putResult, err error) {
 	return t.Put()
 }
 
-func (t *PublicTree) Add(path Path, f fs.File) (res putResult, err error) {
+func (t *PublicTree) Add(path Path, f fs.File) (res PutResult, err error) {
 	if len(path) == 0 {
 		return res, errors.New("invalid path: empty")
 	}
@@ -253,7 +252,7 @@ func (t *PublicTree) Add(path Path, f fs.File) (res putResult, err error) {
 	return t.Put()
 }
 
-func (t *PublicTree) Copy(path Path, srcPathStr string, srcFS fs.FS) (res putResult, err error) {
+func (t *PublicTree) Copy(path Path, srcPathStr string, srcFS fs.FS) (res PutResult, err error) {
 	log.Debugw("PublicTree.copy", "path", path, "srcPath", srcPathStr)
 	if len(path) == 0 {
 		return res, errors.New("invalid path: empty")
@@ -263,7 +262,7 @@ func (t *PublicTree) Copy(path Path, srcPathStr string, srcFS fs.FS) (res putRes
 	if tail == nil {
 		f, err := srcFS.Open(srcPathStr)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		res, err = t.createOrUpdateChild(srcPathStr, head, f, srcFS)
@@ -292,10 +291,10 @@ func (t *PublicTree) Copy(path Path, srcPathStr string, srcFS fs.FS) (res putRes
 	return t.Put()
 }
 
-func (t *PublicTree) Rm(path Path) (putResult, error) {
+func (t *PublicTree) Rm(path Path) (PutResult, error) {
 	head, tail := path.Shift()
 	if head == "" {
-		return putResult{}, fmt.Errorf("invalid path: empty")
+		return PutResult{}, fmt.Errorf("invalid path: empty")
 	}
 
 	if tail == nil {
@@ -303,34 +302,30 @@ func (t *PublicTree) Rm(path Path) (putResult, error) {
 	} else {
 		link := t.userland.Get(head)
 		if link == nil {
-			return putResult{}, ErrNotFound
+			return PutResult{}, ErrNotFound
 		}
 		child, err := loadTreeFromCID(t.fs, head, link.Cid)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		// recurse
 		res, err := child.Rm(tail)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 		t.updateUserlandLink(head, res)
 	}
 
 	// contents of tree have changed, write an update.
-	// TODO(b5) - pretty sure this is a bug if multiple writes are batched in the
-	// same "publish" / transaction. Write advances the previous / current CID,
-	// so if the same directory is mutated multiple times before the next snapshot
-	// we'll have intermediate states as the "previous" pointer
 	return t.Put()
 }
 
-func (t *PublicTree) Put() (putResult, error) {
+func (t *PublicTree) Put() (PutResult, error) {
 	store := t.fs.DagStore()
 	userlandResult, err := store.PutNode(t.userland)
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 
 	links := mdstore.NewLinks(userlandResult.ToLink(userlandLinkName, false))
@@ -339,19 +334,19 @@ func (t *PublicTree) Put() (putResult, error) {
 		t.metadata,
 		t.skeleton,
 	} {
-		file, err := filer.CBORFile(nil)
+		file, err := filer.CBORFile()
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		linkName, err := filename(file)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		res, err := store.PutFile(file)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		links.Add(res.ToLink(linkName, true))
@@ -359,7 +354,7 @@ func (t *PublicTree) Put() (putResult, error) {
 
 	result, err := t.writeHeader(links)
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 
 	t.cid = result.Cid
@@ -367,14 +362,14 @@ func (t *PublicTree) Put() (putResult, error) {
 	return result, nil
 }
 
-func (t *PublicTree) writeHeader(links mdstore.Links) (putResult, error) {
+func (t *PublicTree) writeHeader(links mdstore.Links) (PutResult, error) {
 	store := t.fs.DagStore()
 
 	if !t.cid.Equals(cid.Cid{}) {
 		// TODO(b5): incorrect
 		n, err := store.GetNode(t.cid)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		links.Add(mdstore.Link{
@@ -386,10 +381,10 @@ func (t *PublicTree) writeHeader(links mdstore.Links) (putResult, error) {
 
 	headerNode, err := store.PutNode(links)
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 
-	return putResult{
+	return PutResult{
 		Cid:      headerNode.Cid,
 		Size:     headerNode.Size,
 		Metadata: links.Get(metadataLinkName).Cid,
@@ -407,10 +402,10 @@ func (t *PublicTree) getOrCreateDirectChildTree(name string) (*PublicTree, error
 	return loadTreeFromCID(t.fs, name, link.Cid)
 }
 
-func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (putResult, error) {
+func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (PutResult, error) {
 	fi, err := f.Stat()
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 	if fi.IsDir() {
 		return t.createOrUpdateChildDirectory(srcPathStr, name, f, srcFS)
@@ -418,41 +413,41 @@ func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, src
 	return t.createOrUpdateChildFile(name, f)
 }
 
-func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (putResult, error) {
+func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (PutResult, error) {
 	dir, ok := f.(fs.ReadDirFile)
 	if !ok {
-		return putResult{}, fmt.Errorf("cannot read directory contents")
+		return PutResult{}, fmt.Errorf("cannot read directory contents")
 	}
 	ents, err := dir.ReadDir(-1)
 	if err != nil {
-		return putResult{}, fmt.Errorf("reading directory contents: %w", err)
+		return PutResult{}, fmt.Errorf("reading directory contents: %w", err)
 	}
 
 	var tree *PublicTree
 	if link := t.userland.Get(name); link != nil {
 		tree, err = loadTreeFromCID(t.fs, name, link.Cid)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 	} else {
 		tree = newEmptyPublicTree(t.fs, name)
 	}
 
-	var res putResult
+	var res PutResult
 	for _, ent := range ents {
 		res, err = tree.Copy(Path{ent.Name()}, filepath.Join(srcPathStr, ent.Name()), srcFS)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 	}
 	return res, nil
 }
 
-func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (putResult, error) {
+func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (PutResult, error) {
 	if link := t.userland.Get(name); link != nil {
 		previousFile, err := loadPublicFileFromCID(t.fs, link.Cid, name)
 		if err != nil {
-			return putResult{}, err
+			return PutResult{}, err
 		}
 
 		previousFile.SetContents(f)
@@ -463,7 +458,7 @@ func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (putResult,
 	return ch.Put()
 }
 
-func (t *PublicTree) updateUserlandLink(name string, res putResult) {
+func (t *PublicTree) updateUserlandLink(name string, res PutResult) {
 	t.userland.Add(res.ToLink(name))
 	t.skeleton[name] = res.ToSkeletonInfo()
 	t.metadata.UnixMeta.Mtime = Timestamp().Unix()
@@ -547,7 +542,6 @@ func loadPublicFileFromCID(fs merkleDagFS, id cid.Cid, name string) (*PublicFile
 	}, nil
 }
 
-func (f *PublicFile) IsFile() bool         { return true }
 func (f *PublicFile) Name() string         { return f.name }
 func (f *PublicFile) Cid() cid.Cid         { return f.cid }
 func (f *PublicFile) Size() int64          { return f.size }
@@ -586,22 +580,22 @@ func (f *PublicFile) SetContents(r io.ReadCloser) {
 	f.content = r
 }
 
-func (f *PublicFile) Put() (putResult, error) {
+func (f *PublicFile) Put() (PutResult, error) {
 	store := f.fs.DagStore()
 
 	userlandRes, err := store.PutFile(&BareFile{content: f.content})
 	if err != nil {
-		return putResult{}, fmt.Errorf("putting file %q in store: %w", f.name, err)
+		return PutResult{}, fmt.Errorf("putting file %q in store: %w", f.name, err)
 	}
 	links := mdstore.NewLinks(userlandRes.ToLink(userlandLinkName, true))
 
-	buf, err := encodeCBOR(f.metadata, nil)
+	buf, err := encodeCBOR(f.metadata)
 	if err != nil {
-		return putResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
+		return PutResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
 	}
 	metadataCid, err := store.PutBlock(buf.Bytes())
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 
 	links.Add(mdstore.Link{
@@ -621,7 +615,7 @@ func (f *PublicFile) Put() (putResult, error) {
 	// write header node
 	res, err := store.PutNode(links)
 	if err != nil {
-		return putResult{}, err
+		return PutResult{}, err
 	}
 
 	if !f.cid.Equals(cid.Cid{}) {
@@ -629,7 +623,7 @@ func (f *PublicFile) Put() (putResult, error) {
 	}
 	f.cid = res.Cid
 	log.Debugw("wrote public file", "name", f.name, "cid", f.cid.String())
-	return putResult{
+	return PutResult{
 		Cid: res.Cid,
 		// TODO(b5)
 		// Size: f.Size(),
@@ -648,16 +642,20 @@ func (f *PublicFile) AsHistoryEntry() HistoryEntry {
 	}
 }
 
-type putResult struct {
+type PutResult struct {
 	Cid      cid.Cid
 	Size     int64
 	IsFile   bool
 	Userland cid.Cid
 	Metadata cid.Cid
 	Skeleton Skeleton
+
+	// only present on private files
+	Key     Key
+	Pointer PrivateName
 }
 
-func (r putResult) ToLink(name string) mdstore.Link {
+func (r PutResult) ToLink(name string) mdstore.Link {
 	return mdstore.Link{
 		Name:   name,
 		Cid:    r.Cid,
@@ -666,7 +664,15 @@ func (r putResult) ToLink(name string) mdstore.Link {
 	}
 }
 
-func (r putResult) ToSkeletonInfo() SkeletonInfo {
+func (r PutResult) ToPrivateLink(name string) PrivateLink {
+	return PrivateLink{
+		Link:    r.ToLink(name),
+		Key:     r.Key,
+		Pointer: r.Pointer,
+	}
+}
+
+func (r PutResult) ToSkeletonInfo() SkeletonInfo {
 	return SkeletonInfo{
 		Cid:         r.Cid,
 		Metadata:    r.Metadata,

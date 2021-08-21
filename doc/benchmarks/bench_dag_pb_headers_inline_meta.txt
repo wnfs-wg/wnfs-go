@@ -1,0 +1,11 @@
+goos: darwin
+goarch: amd64
+pkg: github.com/qri-io/wnfs-go
+cpu: Intel(R) Core(TM) i7-6567U CPU @ 3.30GHz
+BenchmarkPublicCat10MbFile-4                          	   22305	     48196 ns/op
+BenchmarkPublicWrite10MbFile-4                        	    5578	    262213 ns/op
+BenchmarkPublicCat10MbFileSubdir-4                    	   23017	     63147 ns/op
+BenchmarkPublicWrite10MbFileSubdir-4                  	    3867	    461975 ns/op
+BenchmarkPublicCp10DirectoriesWithOne10MbFileEach-4   	  294598	      3781 ns/op
+PASS
+ok  	github.com/qri-io/wnfs-go	10.132s

@@ -19,7 +19,7 @@ func TestSkeletonCBOR(t *testing.T) {
 		},
 	}
 
-	f, err := sk.CBORFile(nil)
+	f, err := sk.CBORFile()
 	if err != nil {
 		t.Fatal(err)
 	}

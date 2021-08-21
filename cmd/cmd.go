@@ -12,7 +12,6 @@ import (
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
 	wnipfs "github.com/qri-io/wnfs-go/ipfs"
-	"github.com/qri-io/wnfs-go/mdstore"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -57,12 +56,12 @@ func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
 	var fs wnfs.WNFS
 	if state.RootCID.Equals(cid.Cid{}) {
 		fmt.Printf("creating new wnfs filesystem...")
-		if fs, err = wnfs.NewEmptyFS(ctx, store); err != nil {
+		if fs, err = wnfs.NewEmptyFS(ctx, store, state.RootKey); err != nil {
 			errExit("error: creating empty WNFS: %s\n", err)
 		}
 		fmt.Println("done")
 	} else {
-		if fs, err = wnfs.FromCID(ctx, store, state.RootCID); err != nil {
+		if fs, err = wnfs.FromCID(ctx, store, state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
 			errExit("error: opening WNFS CID %s:\n%s\n", state.RootCID, err.Error())
 		}
 	}
@@ -95,7 +94,13 @@ func main() {
 
 			fs, state = open(ctx)
 			updateExternalState = func() {
-				state.RootCID = fs.(mdstore.DagNode).Cid()
+				state.RootCID = fs.Cid()
+				state.RootKey = fs.RootKey()
+				var err error
+				state.PrivateRootName, err = fs.PrivateName()
+				if err != nil {
+					errExit("error: reading private name: %s\n", err)
+				}
 				fmt.Printf("writing root cid: %s...", state.RootCID)
 				if err := state.Write(); err != nil {
 					errExit("error: writing external state: %s\n", err)

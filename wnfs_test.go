@@ -5,11 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"math/rand"
 
 	"github.com/google/go-cmp/cmp"
 	golog "github.com/ipfs/go-log"
@@ -17,10 +16,20 @@ import (
 	"github.com/qri-io/wnfs-go/mdstore"
 )
 
-func TestWNFS(t *testing.T) {
-	golog.SetLogLevel("wnfs", "debug")
-	defer golog.SetLogLevel("wnfs", "info")
+var testRootKey Key = [32]byte{
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	1, 2,
+}
 
+func init() {
+	if lvl := os.Getenv("WNFS_LOGGING"); lvl != "" {
+		golog.SetLogLevel("wnfs", lvl)
+	}
+}
+
+func TestWNFS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -30,7 +39,7 @@ func TestWNFS(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		fsys, err := NewEmptyFS(ctx, store)
+		fsys, err := NewEmptyFS(ctx, store, testRootKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +76,7 @@ func TestWNFS(t *testing.T) {
 		}
 
 		_, err = fsys.Cat(pathStr)
-		if !errors.Is(ErrNotFound, err) {
+		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("expected calling cat on removed path to return wrap of ErrNotFound. got: %s", err)
 		}
 
@@ -106,6 +115,115 @@ func TestWNFS(t *testing.T) {
 	})
 }
 
+func TestWNFSPrivate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pathStr := "private/foo/hello.txt"
+	fileContents := []byte("hello!")
+	f := NewMemfileBytes("hello.txt", fileContents)
+
+	if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
+		t.Error(err)
+	}
+
+	t.Logf("wnfs root CID: %s", fsys.(mdstore.DagNode).Cid())
+
+	gotFileContents, err := fsys.Cat(pathStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(fileContents, gotFileContents); diff != "" {
+		t.Errorf("result mismatch. (-want +got):\n%s", diff)
+	}
+
+	ents, err := fsys.Ls("private/foo")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 1 {
+		t.Errorf("expected 1 entries. got: %d", len(ents))
+	}
+
+	if err := fsys.Rm(pathStr, MutationOptions{Commit: true}); err != nil {
+		t.Error(err)
+	}
+
+	_, err = fsys.Cat(pathStr)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected calling cat on removed path to return wrap of ErrNotFound. got: %s", err)
+	}
+
+	if err := fsys.Mkdir("private/bar"); err != nil {
+		t.Error(err)
+	}
+
+	ents, err = fsys.Ls("private/foo")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 0 {
+		t.Errorf("expected no entries. got: %d", len(ents))
+	}
+
+	ents, err = fsys.Ls("private")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("expected 2 entries. got: %d", len(ents))
+	}
+
+	dfs := os.DirFS("./testdata")
+	if err := fsys.Cp("private/cats", "cats", dfs, MutationOptions{Commit: true}); err != nil {
+		t.Error(err)
+	}
+
+	ents, err = fsys.Ls("private/cats")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("expected 2 entries. got: %d", len(ents))
+	}
+
+	// close context
+	cancel()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	key := fsys.RootKey()
+	rootCid := fsys.Cid()
+	pn, err := fsys.PrivateName()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err = FromCID(ctx2, store, rootCid, key, pn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ents, err = fsys.Ls("private/cats")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("expected 2 entries. got: %d", len(ents))
+	}
+}
+
 func TestPath(t *testing.T) {
 	p, err := NewPath("public/baz.txt")
 	if err != nil {
@@ -141,7 +259,7 @@ func BenchmarkPublicCat10MbFile(t *testing.B) {
 		t.Fatal(err)
 	}
 
-	fsys, err := NewEmptyFS(ctx, store)
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +290,7 @@ func BenchmarkPublicWrite10MbFile(t *testing.B) {
 		t.Fatal(err)
 	}
 
-	fsys, err := NewEmptyFS(ctx, store)
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +318,7 @@ func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
 		t.Fatal(err)
 	}
 
-	fsys, err := NewEmptyFS(ctx, store)
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +349,7 @@ func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
 		t.Fatal(err)
 	}
 
-	fsys, err := NewEmptyFS(ctx, store)
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +377,7 @@ func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 		t.Fatal(err)
 	}
 
-	fsys, err := NewEmptyFS(ctx, store)
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ var (
 
 // LatestVersion is the most recent semantic version of WNFS this implementation
 // can read/write
-const LatestVersion = SemVer("1.0.0")
+const LatestVersion = SemVer("2.0.0dev")
 
 const (
 	// FileHierarchyNamePublic is the root of public files on WNFS
@@ -39,7 +39,9 @@ type WNFS interface {
 	fs.FS
 	fs.ReadDirFile // wnfs root is a directory file
 	PosixFS
+	PrivateFS
 
+	Cid() cid.Cid
 	History(pathStr string, generations int) ([]HistoryEntry, error)
 }
 
@@ -59,6 +61,11 @@ type PosixFS interface {
 	Rm(pathStr string, opts ...MutationOptions) error
 }
 
+type PrivateFS interface {
+	RootKey() Key
+	PrivateName() (PrivateName, error)
+}
+
 type MutationOptions struct {
 	SourceFS fs.FS
 	Commit   bool
@@ -74,6 +81,7 @@ func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
 type merkleDagFS interface {
 	fs.FS
 	DagStore() mdstore.MerkleDagStore
+	MMPT() *MMPT
 }
 
 type fileSystem struct {
@@ -88,29 +96,45 @@ var (
 	_ mdstore.DagNode = (*fileSystem)(nil)
 )
 
-func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore) (WNFS, error) {
+func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rootKey Key) (WNFS, error) {
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: dagStore,
 	}
 
-	root, err := newEmptyRootTree(fs, "")
+	root, err := newEmptyRootTree(fs, rootKey)
 	if err != nil {
 		return nil, err
 	}
 
 	fs.root = root
+
+	// put all root tree to establish base hashes for all top level directories in
+	// the file hierarchy
+	if _, err := root.Public.Put(); err != nil {
+		return nil, err
+	}
+	if _, err := root.Private.Put(); err != nil {
+		return nil, err
+	}
+	if _, err := root.mmpt.Put(); err != nil {
+		return nil, err
+	}
+	if _, err := root.Put(); err != nil {
+		return nil, err
+	}
+
 	return fs, nil
 }
 
-func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid) (WNFS, error) {
+func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid, rootKey Key, rootName PrivateName) (WNFS, error) {
 	log.Debugw("FromCID", "cid", id)
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: dagStore,
 	}
 
-	root, err := newRootTreeFromCID(fs, id)
+	root, err := newRootTreeFromCID(fs, id, rootKey, rootName)
 	if err != nil {
 		return nil, fmt.Errorf("opening root tree %s:\n%w", id, err)
 	}
@@ -133,8 +157,6 @@ func (fsys *fileSystem) Stat() (fs.FileInfo, error) {
 	}, nil
 }
 
-func (fsys *fileSystem) IsDir() bool { return true }
-
 func (fsys *fileSystem) Read(p []byte) (n int, err error) {
 	return -1, errors.New("cannot read bytes of filsystem root")
 }
@@ -150,8 +172,24 @@ func (fsys *fileSystem) ReadDir(n int) ([]fs.DirEntry, error) {
 	}, nil
 }
 
+func (fsys *fileSystem) RootKey() Key {
+	return fsys.root.Private.ratchet.Key()
+}
+
+func (fsys *fileSystem) PrivateName() (PrivateName, error) {
+	pn, err := fsys.root.Private.PrivateName()
+	if err != nil {
+		return "", err
+	}
+	return pn, nil
+}
+
 func (fsys *fileSystem) DagStore() mdstore.MerkleDagStore {
 	return fsys.store
+}
+
+func (fsys *fileSystem) MMPT() *MMPT {
+	return fsys.root.mmpt
 }
 
 func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
@@ -323,8 +361,7 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir Tree, relP
 	case FileHierarchyNamePublic:
 		return fsys.root.Public, tail, nil
 	case FileHierarchyNamePrivate:
-		return nil, tail, errors.New("private files are not implemented in wnfs-go")
-	// 	return fsys.root.Private, relPath, nil
+		return fsys.root.Private, tail, nil
 	// case FileHierarchyNamePretty:
 	// 	return fsys.root.Pretty, relPath, nil
 	default:
@@ -362,7 +399,7 @@ func (p Path) Shift() (head string, ch Path) {
 }
 
 type Node interface {
-	IsFile() bool
+	fs.File
 	AsHistoryEntry() HistoryEntry
 }
 
@@ -373,10 +410,10 @@ type File interface {
 type Tree interface {
 	Node
 	Get(path Path) (fs.File, error)
-	Add(path Path, f fs.File) (putResult, error)
-	Copy(path Path, srcPath string, src fs.FS) (putResult, error)
-	Rm(path Path) (putResult, error)
-	Mkdir(path Path) (putResult, error)
+	Add(path Path, f fs.File) (PutResult, error)
+	Copy(path Path, srcPath string, src fs.FS) (PutResult, error)
+	Rm(path Path) (PutResult, error)
+	Mkdir(path Path) (PutResult, error)
 }
 
 type rootTree struct {
@@ -387,23 +424,27 @@ type rootTree struct {
 	Pretty  *BareTree
 	Public  *PublicTree
 	Private *PrivateTree
-	MMPT    *MMPT
+	mmpt    *MMPT
 }
 
-func newEmptyRootTree(fs merkleDagFS, rootKey string) (*rootTree, error) {
+func newEmptyRootTree(fs merkleDagFS, rootKey Key) (*rootTree, error) {
 	root := &rootTree{
-		fs: fs,
-
+		fs:     fs,
 		Public: newEmptyPublicTree(fs, FileHierarchyNamePublic),
 		Pretty: &BareTree{},
-		// Private: *PrivateTree,
-		MMPT: &MMPT{},
+		mmpt:   NewMMPT(fs.DagStore(), mdstore.NewLinks()),
 	}
+
+	private, err := NewEmptyPrivateTree(fs, identityBareNamefilter(), FileHierarchyNamePrivate)
+	if err != nil {
+		return nil, err
+	}
+	root.Private = private
 
 	return root, nil
 }
 
-func newRootTreeFromCID(fs merkleDagFS, id cid.Cid) (*rootTree, error) {
+func newRootTreeFromCID(fs merkleDagFS, id cid.Cid, rootKey Key, rootName PrivateName) (*rootTree, error) {
 	node, err := fs.DagStore().GetNode(id)
 	if err != nil {
 		return nil, fmt.Errorf("loading header block %q:\n%w", id.String(), err)
@@ -421,13 +462,43 @@ func newRootTreeFromCID(fs merkleDagFS, id cid.Cid) (*rootTree, error) {
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
+	var (
+		mmpt        *MMPT
+		privateTree *PrivateTree
+	)
+
+	if mmptLink := links.Get(FileHierarchyNamePrivate); mmptLink != nil {
+		mmpt, err = LoadMMPT(fs.DagStore(), mmptLink.Cid)
+		if err != nil {
+			return nil, fmt.Errorf("opening private tree:\n%w", err)
+		}
+
+		if rootName != PrivateName("") {
+			if privateRoot, err := mmpt.Get(string(rootName)); err == nil {
+				privateTree, err = LoadPrivateTreeFromCID(fs, FileHierarchyNamePrivate, rootKey, privateRoot)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, fmt.Errorf("opening private root:\n%w", err)
+			}
+		}
+	} else {
+		mmpt = NewMMPT(fs.DagStore(), mdstore.NewLinks())
+		privateTree, err = NewEmptyPrivateTree(fs, identityBareNamefilter(), FileHierarchyNamePrivate)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	root := &rootTree{
 		fs: fs,
 		id: id,
 
-		Public: public,
-		Pretty: &BareTree{}, // TODO
-		MMPT:   &MMPT{},
+		Public:  public,
+		Pretty:  &BareTree{}, // TODO(b5): finish pretty tree
+		Private: privateTree,
+		mmpt:    mmpt,
 	}
 
 	return root, nil
@@ -447,36 +518,29 @@ func (r *rootTree) Cid() cid.Cid { return r.id }
 func (r *rootTree) Name() string { return "wnfs" }
 func (r *rootTree) Size() int64  { return r.size }
 func (r *rootTree) Links() mdstore.Links {
-	return mdstore.NewLinks(
+	links := mdstore.NewLinks(
 		// mdstore.LinkFromNode(r.Pretty, FileHierarchyNamePretty, false),
 		mdstore.LinkFromNode(r.Public, FileHierarchyNamePublic, false),
-		// r.Private,
-		// r.MMPT,
 	)
+	if r.mmpt != nil && r.mmpt.Cid().Defined() {
+		links.Add(mdstore.LinkFromNode(r.mmpt, FileHierarchyNamePrivate, false))
+	}
+	return links
 }
 
 type CBORFiler interface {
-	CBORFile(encKey *string) (fs.File, error)
+	CBORFile() (fs.File, error)
 }
 
 func decodeCBOR(d []byte, v interface{}) error {
 	return cbor.Unmarshal(d, v)
 }
 
-func encodeCBOR(v interface{}, encKey *string) (*bytes.Buffer, error) {
+func encodeCBOR(v interface{}) (*bytes.Buffer, error) {
 	buf := &bytes.Buffer{}
 	err := cbor.NewEncoder(buf).Encode(v)
 	if err != nil {
 		return nil, err
 	}
-
-	if encKey != nil {
-		buf = bytes.NewBuffer(aesEncrypt(buf.Bytes(), *encKey))
-	}
 	return buf, err
-}
-
-func aesEncrypt(d []byte, key string) []byte {
-	panic("unfinished: aesEncrypt")
-	// return d
 }
