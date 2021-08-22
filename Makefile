@@ -8,4 +8,6 @@ install:
 	cp wnfs /usr/local/bin/wnfs
 
 bench:
-	go test -bench=. -run XXX -benchmem -benchtime 5s
+	cd ipfs && go test -bench=. -run XXX -benchmem && echo ""
+	go test -bench=BenchmarkPublic -run XXX -benchmem && echo ""
+	go test -bench=BenchmarkPrivate -run XXX -benchmem
