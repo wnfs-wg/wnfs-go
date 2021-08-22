@@ -44,6 +44,7 @@ type PrivatePutResult struct {
 
 type PrivateTreeInfo struct {
 	INum     INumber
+	Size     int64
 	Bnf      BareNamefilter
 	Ratchet  string
 	Links    PrivateLinks
@@ -139,7 +140,7 @@ func (pt *PrivateTree) BareNamefilter() BareNamefilter { return pt.info.Bnf }
 func (pt *PrivateTree) INumber() INumber               { return pt.info.INum }
 func (pt *PrivateTree) Cid() cid.Cid                   { return pt.cid }
 func (pt *PrivateTree) Links() mdstore.Links           { return mdstore.NewLinks() } // TODO(b5): private links
-func (pt *PrivateTree) Size() int64                    { return -1 }                 // TODO(b5): size calculations
+func (pt *PrivateTree) Size() int64                    { return pt.info.Size }
 func (pt *PrivateTree) AsHistoryEntry() HistoryEntry {
 	return HistoryEntry{
 		// TODO(b5): finish
@@ -158,7 +159,7 @@ func (pt *PrivateTree) Key() Key { return pt.ratchet.Key() }
 func (pt *PrivateTree) Stat() (fs.FileInfo, error) {
 	return &fsFileInfo{
 		name: pt.name,
-		// size: t.size,
+		size: pt.info.Size,
 		// TODO (b5):
 		// mode:  t.metadata.UnixMeta.Mode,
 		mode:  fs.ModeDir,
@@ -417,6 +418,7 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 	pt.ratchet.Advance()
 	key := pt.ratchet.Key()
 	pt.info.Ratchet = pt.ratchet.Encode()
+	pt.info.Size = pt.info.Links.SizeSum()
 
 	plainText, err := encodeCBOR(pt.info)
 	if err != nil {
@@ -443,9 +445,10 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 	}
 
 	pt.cid = res.Cid
-	log.Debugw("PrivateTree.Put", "name", pt.name, "cid", pt.cid.String(), "key", key)
+	log.Debugw("PrivateTree.Put", "name", pt.name, "cid", pt.cid.String(), "key", key, "size", pt.info.Size)
 	return PutResult{
 		Cid:     pt.cid,
+		Size:    pt.info.Size,
 		Key:     key,
 		Pointer: privName,
 	}, nil
@@ -472,6 +475,7 @@ type PrivateFile struct {
 
 type PrivateFileInfo struct {
 	INumber        INumber
+	Size           int64
 	BareNamefilter BareNamefilter
 	Ratchet        string
 	Metadata       *Metadata
@@ -571,9 +575,9 @@ func (pf *PrivateFile) Key() Key { return pf.ratchet.Key() }
 func (pf *PrivateFile) Stat() (fs.FileInfo, error) {
 	return fsFileInfo{
 		name: pf.name,
-		// size: f.size,
+		size: pf.info.Size,
 		// TODO(b5):
-		// mode: f.metadata.UnixMeta.Mode,
+		// mode:  pf.info.Metadata.UnixMeta.Mode,
 		mtime: time.Unix(pf.info.Metadata.UnixMeta.Mtime, 0),
 		sys:   pf.fs,
 	}, nil
@@ -616,6 +620,7 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 
 	// update header details
 	pf.info.ContentID = res.Cid
+	pf.info.Size = res.Size
 	pf.info.Ratchet = pf.ratchet.Encode()
 	pf.info.Metadata.UnixMeta.Mtime = Timestamp().Unix()
 
@@ -642,12 +647,13 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	log.Debugw("PrivateFile.Put", "name", pf.name, "cid", pf.cid.String())
+	log.Debugw("PrivateFile.Put", "name", pf.name, "cid", pf.cid.String(), "size", res.Size)
 	pf.cid = headerRes.Cid
 	return PutResult{
 		Cid:      headerRes.Cid,
 		IsFile:   true,
 		Userland: res.Cid,
+		Size:     res.Size,
 		Key:      key,
 		Pointer:  privName,
 	}, nil
@@ -691,12 +697,6 @@ func decrypt(enc io.ReadCloser, key Key) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-type Revision struct {
-	ID     cid.Cid
-	Name   PrivateName
-	Number int
-}
-
 type INumber [32]byte
 
 func NewINumber() INumber {
@@ -727,6 +727,16 @@ func (pls PrivateLinks) Get(name string) *PrivateLink {
 	return &l
 }
 
+func (pls PrivateLinks) Add(link PrivateLink) {
+	pls[link.Name] = link
+}
+
+func (pls PrivateLinks) Remove(name string) bool {
+	_, existed := pls[name]
+	delete(pls, name)
+	return existed
+}
+
 func (pls PrivateLinks) SortedSlice() []PrivateLink {
 	names := make([]string, 0, len(pls))
 	for name := range pls {
@@ -741,12 +751,9 @@ func (pls PrivateLinks) SortedSlice() []PrivateLink {
 	return links
 }
 
-func (pls PrivateLinks) Add(link PrivateLink) {
-	pls[link.Name] = link
-}
-
-func (pls PrivateLinks) Remove(name string) bool {
-	_, existed := pls[name]
-	delete(pls, name)
-	return existed
+func (pls PrivateLinks) SizeSum() (total int64) {
+	for _, l := range pls {
+		total += l.Size
+	}
+	return total
 }
