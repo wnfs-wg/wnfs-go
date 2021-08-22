@@ -68,7 +68,7 @@ func (t *MMPT) Put() (PutResult, error) {
 	if err != nil {
 		return PutResult{}, err
 	}
-	log.Debugw("Put", "linkLen", t.links.Len(), "res.Cid", res.Cid, "err", err)
+	log.Debugw("MMPT.Put", "linkLen", t.links.Len(), "res.Cid", res.Cid, "err", err)
 
 	t.id = res.Cid
 	return PutResult{
@@ -78,7 +78,7 @@ func (t *MMPT) Put() (PutResult, error) {
 }
 
 func (t *MMPT) Add(name string, id cid.Cid) error {
-	log.Debugw("Add", "name", name, "cid", id, "links", t.links.Map())
+	log.Debugw("MMPT.Add", "name", name, "cid", id, "linkLen", t.links.Len())
 	if !isNibble(name[0]) {
 		return fmt.Errorf("not a valid name, must be hexadecimal")
 	}

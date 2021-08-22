@@ -23,7 +23,7 @@ var (
 )
 
 // LatestVersion is the most recent semantic version of WNFS this implementation
-// can read/write
+// reads/writes
 const LatestVersion = SemVer("2.0.0dev")
 
 const (
@@ -480,7 +480,7 @@ func newRootTreeFromCID(fs merkleDagFS, id cid.Cid, rootKey Key, rootName Privat
 					return nil, err
 				}
 			} else {
-				return nil, fmt.Errorf("opening private root:\n%w", err)
+				return nil, fmt.Errorf("opening private root %s:\n%w", rootName, err)
 			}
 		}
 	} else {
