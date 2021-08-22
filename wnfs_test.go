@@ -29,7 +29,7 @@ func init() {
 	}
 }
 
-func TestWNFS(t *testing.T) {
+func TestPublicWNFS(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -113,141 +113,6 @@ func TestWNFS(t *testing.T) {
 			t.Errorf("expected 2 entries. got: %d", len(ents))
 		}
 	})
-}
-
-func TestWNFSPrivate(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	pathStr := "private/foo/hello.txt"
-	fileContents := []byte("hello!")
-	f := NewMemfileBytes("hello.txt", fileContents)
-
-	if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
-		t.Error(err)
-	}
-
-	t.Logf("wnfs root CID: %s", fsys.(mdstore.DagNode).Cid())
-
-	gotFileContents, err := fsys.Cat(pathStr)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if diff := cmp.Diff(fileContents, gotFileContents); diff != "" {
-		t.Errorf("result mismatch. (-want +got):\n%s", diff)
-	}
-
-	ents, err := fsys.Ls("private/foo")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 1 {
-		t.Errorf("expected 1 entries. got: %d", len(ents))
-	}
-
-	if err := fsys.Rm(pathStr, MutationOptions{Commit: true}); err != nil {
-		t.Error(err)
-	}
-
-	_, err = fsys.Cat(pathStr)
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("expected calling cat on removed path to return wrap of ErrNotFound. got: %s", err)
-	}
-
-	if err := fsys.Mkdir("private/bar"); err != nil {
-		t.Error(err)
-	}
-
-	ents, err = fsys.Ls("private/foo")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 0 {
-		t.Errorf("expected no entries. got: %d", len(ents))
-	}
-
-	ents, err = fsys.Ls("private")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 2 {
-		t.Errorf("expected 2 entries. got: %d", len(ents))
-	}
-
-	dfs := os.DirFS("./testdata")
-	if err := fsys.Cp("private/cats", "cats", dfs, MutationOptions{Commit: true}); err != nil {
-		t.Error(err)
-	}
-
-	ents, err = fsys.Ls("private/cats")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 2 {
-		t.Errorf("expected 2 entries. got: %d", len(ents))
-	}
-
-	// close context
-	cancel()
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
-
-	key := fsys.RootKey()
-	rootCid := fsys.Cid()
-	pn, err := fsys.PrivateName()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fsys, err = FromCID(ctx2, store, rootCid, key, pn)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ents, err = fsys.Ls("private/cats")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 2 {
-		t.Errorf("expected 2 entries. got: %d", len(ents))
-	}
-}
-
-func TestPath(t *testing.T) {
-	p, err := NewPath("public/baz.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, tail := p.Shift()
-	want := "public"
-	if want != got {
-		t.Errorf("result mismatch. want: %q got: %q", want, got)
-	}
-	wantTail := Path{"baz.txt"}
-	if diff := cmp.Diff(wantTail, tail); diff != "" {
-		t.Errorf("result mismatch, (-want +got):\n%s", diff)
-	}
-
-	got, tail = tail.Shift()
-	want = "baz.txt"
-	if want != got {
-		t.Errorf("result mismatch. want: %q got: %q", want, got)
-	}
-	if tail != nil {
-		t.Errorf("expected tail to equal nil. got: %v", tail)
-	}
 }
 
 func BenchmarkPublicCat10MbFile(t *testing.B) {
@@ -411,5 +276,304 @@ func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 
 	if _, err := fsys.Open("public/copy_me/dir_0/bench.txt"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWNFSPrivate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pathStr := "private/foo/hello.txt"
+	fileContents := []byte("hello!")
+	f := NewMemfileBytes("hello.txt", fileContents)
+
+	if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
+		t.Error(err)
+	}
+
+	t.Logf("wnfs root CID: %s", fsys.(mdstore.DagNode).Cid())
+
+	gotFileContents, err := fsys.Cat(pathStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(fileContents, gotFileContents); diff != "" {
+		t.Errorf("result mismatch. (-want +got):\n%s", diff)
+	}
+
+	ents, err := fsys.Ls("private/foo")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 1 {
+		t.Errorf("expected 1 entries. got: %d", len(ents))
+	}
+
+	if err := fsys.Rm(pathStr, MutationOptions{Commit: true}); err != nil {
+		t.Error(err)
+	}
+
+	_, err = fsys.Cat(pathStr)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected calling cat on removed path to return wrap of ErrNotFound. got: %s", err)
+	}
+
+	if err := fsys.Mkdir("private/bar"); err != nil {
+		t.Error(err)
+	}
+
+	ents, err = fsys.Ls("private/foo")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 0 {
+		t.Errorf("expected no entries. got: %d", len(ents))
+	}
+
+	ents, err = fsys.Ls("private")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("expected 2 entries. got: %d", len(ents))
+	}
+
+	dfs := os.DirFS("./testdata")
+	if err := fsys.Cp("private/cats", "cats", dfs, MutationOptions{Commit: true}); err != nil {
+		t.Error(err)
+	}
+
+	ents, err = fsys.Ls("private/cats")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("expected 2 entries. got: %d", len(ents))
+	}
+
+	// close context
+	cancel()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	key := fsys.RootKey()
+	rootCid := fsys.Cid()
+	pn, err := fsys.PrivateName()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err = FromCID(ctx2, store, rootCid, key, pn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ents, err = fsys.Ls("private/cats")
+	if err != nil {
+		t.Error(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("expected 2 entries. got: %d", len(ents))
+	}
+}
+
+func BenchmarkPrivateCat10MbFile(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	fsys.Write("private/bench.txt", textFile, MutationOptions{
+		Commit: true,
+	})
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		if _, err := fsys.Cat("private/bench.txt"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPrivateWrite10MbFile(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		fsys.Write("private/bench.txt", textFile, MutationOptions{
+			Commit: true,
+		})
+	}
+}
+
+func BenchmarkPrivateCat10MbFileSubdir(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	fsys.Write("private/subdir/bench.txt", textFile, MutationOptions{
+		Commit: true,
+	})
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		if _, err := fsys.Cat("private/subdir/bench.txt"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPrivateWrite10MbFileSubdir(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 1024*10)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	textFile := NewMemfileBytes("bench.txt", data)
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		fsys.Write("private/subdir/bench.txt", textFile, MutationOptions{
+			Commit: true,
+		})
+	}
+}
+
+func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store, err := mockipfs.MockMerkleDagStore(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir, err := ioutil.TempDir("", "bench_10_single_file_directories")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	for i := 0; i < 10; i++ {
+		path := filepath.Join(dir, "copy_me", fmt.Sprintf("dir_%d", i))
+		os.MkdirAll(path, 0755)
+		path = filepath.Join(path, "bench.txt")
+
+		data := make([]byte, 1024*10)
+		if _, err := rand.Read(data); err != nil {
+			t.Fatal(err)
+		}
+		ioutil.WriteFile(path, data, os.ModePerm)
+	}
+
+	dirFS := os.DirFS(dir)
+	t.ResetTimer()
+
+	for i := 0; i < t.N; i++ {
+		fsys.Cp("private/copy_me", "copy_me", dirFS, MutationOptions{
+			Commit: true,
+		})
+	}
+
+	if _, err := fsys.Open("private/copy_me/dir_0/bench.txt"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPath(t *testing.T) {
+	p, err := NewPath("public/baz.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, tail := p.Shift()
+	want := "public"
+	if want != got {
+		t.Errorf("result mismatch. want: %q got: %q", want, got)
+	}
+	wantTail := Path{"baz.txt"}
+	if diff := cmp.Diff(wantTail, tail); diff != "" {
+		t.Errorf("result mismatch, (-want +got):\n%s", diff)
+	}
+
+	got, tail = tail.Shift()
+	want = "baz.txt"
+	if want != got {
+		t.Errorf("result mismatch. want: %q got: %q", want, got)
+	}
+	if tail != nil {
+		t.Errorf("expected tail to equal nil. got: %v", tail)
 	}
 }
