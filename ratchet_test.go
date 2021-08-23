@@ -138,3 +138,35 @@ func hexMap(r *SpiralRatchet) map[string]string {
 		"smallCeil":  hex.EncodeToString(r.smallCeil[:]),
 	}
 }
+
+func BenchmarkRatchetAdvance256(b *testing.B) {
+	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
+	for i := 0; i < b.N; i++ {
+		r := NewSpiralRatchetFromSeed(seed)
+		for i := 0; i < 255; i++ {
+			r.Advance()
+		}
+	}
+}
+
+func BenchmarkRatchetDeserializeAdvance(b *testing.B) {
+	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
+	r := NewSpiralRatchetFromSeed(seed)
+	// advance ratchet a bunch
+	for i := 0; i < 125; i++ {
+		r.Advance()
+	}
+	// serialize to a string
+	enc := r.Encode()
+
+	// confirm ratchet will decode
+	if _, err := DecodeRatchet(enc); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r, _ = DecodeRatchet(enc)
+		r.Advance()
+	}
+}
