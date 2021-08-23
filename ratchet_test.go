@@ -14,17 +14,17 @@ func TestRatchet(t *testing.T) {
 
 	a := NewSpiralRatchetFromSeed(seed)
 	assertRatchet(t, a, map[string]string{
-		"large":      "8e2023cc8b9b279c5f6eb03938abf935dde93be9bfdc006a0f570535fda82ef8",
-		"medium":     "99009e29ac6546ebce395d4b9b3a4c0eeafa8b3a814c4343a1a7a47893655e69",
-		"mediumCeil": "046d10975da721f0e92a2329ef12e6e53617a23babf652b16653eb0597750758",
-		"small":      "c18a8da7f51d2327b9712f63c357bd6316df737df0493a4b18ec691dece559c9",
-		"smallCeil":  "23605df95870dec1a2de51e3de80dd082d8dded3b8041f34667e1cce8a48e3d1",
+		"large":        "8e2023cc8b9b279c5f6eb03938abf935dde93be9bfdc006a0f570535fda82ef8",
+		"medium":       "99009e29ac6546ebce395d4b9b3a4c0eeafa8b3a814c4343a1a7a47893655e69",
+		"mediumCursor": "00",
+		"small":        "c18a8da7f51d2327b9712f63c357bd6316df737df0493a4b18ec691dece559c9",
+		"smallCursor":  "00",
 	})
 
 	// prove a single advance is sane
-	a.Advance()
+	a.Add1()
 	b := NewSpiralRatchetFromSeed(seed)
-	b.Advance()
+	b.Add1()
 	assertRatchetsEqual(t, a, b)
 
 	aH := a.Key()
@@ -34,32 +34,52 @@ func TestRatchet(t *testing.T) {
 	}
 }
 
-func TestRatchetAdvanceMedium(t *testing.T) {
+func TestRatchetAdd256(t *testing.T) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	// manually advance ratchet 256 (2 ^ 8) times
 	slow := NewSpiralRatchetFromSeed(seed)
-	for i := 0; i < 255; i++ {
-		slow.Advance()
+	for i := 0; i < 256; i++ {
+		slow.Add1()
 	}
 
 	// fast jump 256 values in one shot
 	fast := NewSpiralRatchetFromSeed(seed)
-	fast.AdvanceMedium()
+	fast.Add256()
 
 	assertRatchetsEqual(t, slow, fast)
 }
 
-func TestRatchetAdvanceLarge(t *testing.T) {
+func TestRatchetAdd1000(t *testing.T) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
-	// manually advance ratchet 2 ^ 16 times
+	// manually advance ratchet 2 ^ 16 times (65,536)
 	slow := NewSpiralRatchetFromSeed(seed)
-	for i := 0; i < 65535; i++ {
-		slow.Advance()
+	for i := 0; i < 1000; i++ {
+		slow.Add1()
 	}
 
 	// fast jump 2 ^ 16 values in one shot
 	fast := NewSpiralRatchetFromSeed(seed)
-	fast.AdvanceLarge()
+	fast.Add256()
+	fast.Add256()
+	fast.Add256()
+	for i := 0; i < 1000-768; i++ {
+		fast.Add1()
+	}
+
+	assertRatchetsEqual(t, slow, fast)
+}
+
+func TestRatchetAdd65536(t *testing.T) {
+	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
+	// manually advance ratchet 2 ^ 16 times (65,536)
+	slow := NewSpiralRatchetFromSeed(seed)
+	for i := 0; i < 65536; i++ {
+		slow.Add1()
+	}
+
+	// fast jump 2 ^ 16 values in one shot
+	fast := NewSpiralRatchetFromSeed(seed)
+	fast.Add65536()
 
 	assertRatchetsEqual(t, slow, fast)
 }
@@ -77,15 +97,15 @@ func TestRatchetCoding(t *testing.T) {
 	assertRatchetsEqual(t, a, b)
 }
 
-func TestBinaryCompliment(t *testing.T) {
+func TestCompliment(t *testing.T) {
 	zeros := [32]byte{}
 	ones := bytes.Repeat([]byte{255}, 32)
-	if !bytes.Equal(binaryCompliment(zeros), ones) {
+	if !bytes.Equal(compliement(zeros), ones) {
 		t.Errorf("expected compliment of empty bytes to be the ceil of a 32 byte slice")
 	}
 }
 
-func TestBinaryXOR(t *testing.T) {
+func TestXOR(t *testing.T) {
 	zeros := [32]byte{}
 	ones := [32]byte{
 		255, 255, 255, 255, 255, 255, 255, 255,
@@ -94,10 +114,10 @@ func TestBinaryXOR(t *testing.T) {
 		255, 255, 255, 255, 255, 255, 255, 255,
 	}
 
-	if binaryXOR(zeros, zeros) != zeros {
+	if xor(zeros, zeros) != zeros {
 		t.Errorf("zeros^zeros must equal zeros")
 	}
-	if binaryXOR(zeros, ones) != ones {
+	if xor(zeros, ones) != ones {
 		t.Errorf("zeros^ones must equal ones")
 	}
 }
@@ -131,30 +151,30 @@ func shasumFromHex(s string) [32]byte {
 
 func hexMap(r *SpiralRatchet) map[string]string {
 	return map[string]string{
-		"large":      hex.EncodeToString(r.large[:]),
-		"medium":     hex.EncodeToString(r.medium[:]),
-		"mediumCeil": hex.EncodeToString(r.mediumCeil[:]),
-		"small":      hex.EncodeToString(r.small[:]),
-		"smallCeil":  hex.EncodeToString(r.smallCeil[:]),
+		"large":        hex.EncodeToString(r.large[:]),
+		"medium":       hex.EncodeToString(r.medium[:]),
+		"mediumCursor": hex.EncodeToString([]byte{r.mediumCursor}),
+		"small":        hex.EncodeToString(r.small[:]),
+		"smallCursor":  hex.EncodeToString([]byte{r.smallCursor}),
 	}
 }
 
-func BenchmarkRatchetAdvance256(b *testing.B) {
+func BenchmarkRatchetAdd256(b *testing.B) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	for i := 0; i < b.N; i++ {
 		r := NewSpiralRatchetFromSeed(seed)
 		for i := 0; i < 255; i++ {
-			r.Advance()
+			r.Add1()
 		}
 	}
 }
 
-func BenchmarkRatchetDeserializeAdvance(b *testing.B) {
+func BenchmarkRatchetDeserializeAdd1(b *testing.B) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	r := NewSpiralRatchetFromSeed(seed)
 	// advance ratchet a bunch
 	for i := 0; i < 125; i++ {
-		r.Advance()
+		r.Add1()
 	}
 	// serialize to a string
 	enc := r.Encode()
@@ -167,6 +187,6 @@ func BenchmarkRatchetDeserializeAdvance(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		r, _ = DecodeRatchet(enc)
-		r.Advance()
+		r.Add1()
 	}
 }

@@ -4,15 +4,11 @@ import (
 	"context"
 	"testing"
 
-	golog "github.com/ipfs/go-log"
 	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
 
 func TestMMPT(t *testing.T) {
-	golog.SetLogLevel("wnfs", "debug")
-	defer golog.SetLogLevel("wnfs", "info")
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
