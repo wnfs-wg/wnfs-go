@@ -415,7 +415,7 @@ func (pt *PrivateTree) createOrUpdateChildFile(name string, f fs.File) (PutResul
 func (pt *PrivateTree) Put() (PutResult, error) {
 	store := pt.fs.DagStore()
 
-	pt.ratchet.Advance()
+	pt.ratchet.Add1()
 	key := pt.ratchet.Key()
 	pt.info.Ratchet = pt.ratchet.Encode()
 	pt.info.Size = pt.info.Links.SizeSum()
@@ -596,7 +596,7 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 	// generate a new version key by advancing the ratchet
 	// TODO(b5): what happens if anything errors after advancing the ratchet?
 	// assuming we need to make a point of throwing away the file & cleaning the MMPT
-	pf.ratchet.Advance()
+	pf.ratchet.Add1()
 	key := pf.ratchet.Key()
 
 	plainText, err := ioutil.ReadAll(pf.content)

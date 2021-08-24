@@ -9,6 +9,11 @@ import (
 	"fmt"
 )
 
+// Flag the encoding. The default encoding is:
+// * base64URL-unpadded (signified with u)
+// * SHA-256 (0x16: "F" in base64URL)
+const ratchetSignifier = "uF"
+
 type Key [32]byte
 
 func NewKey() Key {
@@ -37,15 +42,15 @@ func (k *Key) UnmarshalJSON(d []byte) error {
 }
 
 type SpiralRatchet struct {
-	large      [32]byte
-	medium     [32]byte // bounded to 256 elements
-	mediumCeil [32]byte
-	small      [32]byte // bounded to 256 elements
-	smallCeil  [32]byte
+	large        [32]byte
+	medium       [32]byte // bounded to 256 elements
+	mediumCursor byte     // used as a uint8
+	small        [32]byte // bounded to 256 elements
+	smallCursor  byte     // used as a uint8
 }
 
 func NewSpiralRatchet() *SpiralRatchet {
-	seedData := make([]byte, 32, 32)
+	seedData := make([]byte, 32)
 	if _, err := rand.Read(seedData); err != nil {
 		panic(err)
 	}
@@ -57,117 +62,103 @@ func NewSpiralRatchet() *SpiralRatchet {
 }
 
 func NewSpiralRatchetFromSeed(seed [32]byte) *SpiralRatchet {
-	medium := sha256.Sum256(binaryCompliment(seed))
-	small := sha256.Sum256(binaryCompliment(medium))
+	medium := sha256.Sum256(compliement(seed))
+	small := sha256.Sum256(compliement(medium))
 
-	// TODO (use crypto random to scramble small & medium)
+	// TODO (use crypto.Random to scramble small & medium)
 
 	return &SpiralRatchet{
-		large:      sha256.Sum256(seed[:]),
-		medium:     sha256.Sum256(medium[:]),
-		mediumCeil: mediumCeil(medium),
-		small:      sha256.Sum256(small[:]),
-		smallCeil:  smallCeil(small),
+		large:  sha256.Sum256(seed[:]),
+		medium: sha256.Sum256(medium[:]),
+		small:  sha256.Sum256(small[:]),
 	}
 }
 
 func DecodeRatchet(s string) (*SpiralRatchet, error) {
-	data, err := base64.URLEncoding.DecodeString(s)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) != 5*32 {
+	if len(s) != 133 {
 		return nil, fmt.Errorf("invalid ratchet length")
 	}
 
-	fields := [5][32]byte{}
-	for i, b := range data {
-		fields[i/32][i%32] = b
+	if s[:2] != ratchetSignifier {
+		return nil, fmt.Errorf("unsupported ratched encoding: %q. only %q is supported", s[:2], ratchetSignifier)
+	}
+	data, err := base64.RawURLEncoding.DecodeString(s[2:])
+	if err != nil {
+		return nil, err
 	}
 
-	return &SpiralRatchet{
-		large:      fields[0],
-		medium:     fields[1],
-		mediumCeil: fields[2],
-		small:      fields[3],
-		smallCeil:  fields[4],
-	}, nil
+	r := &SpiralRatchet{}
+	for i, d := range data {
+		switch {
+		case i < 32:
+			r.small[i] = d
+		case i == 32:
+			r.smallCursor = d
+		case i >= 33 && i < 65:
+			r.medium[i-33] = d
+		case i == 65:
+			r.mediumCursor = d
+		case i >= 66 && i < 98:
+			r.large[i-66] = d
+		}
+	}
+
+	return r, nil
 }
 
 func (r *SpiralRatchet) Encode() string {
 	b := &bytes.Buffer{}
-	b.Write(r.large[:])
-	b.Write(r.medium[:])
-	b.Write(r.mediumCeil[:])
 	b.Write(r.small[:])
-	b.Write(r.smallCeil[:])
-	return base64.URLEncoding.EncodeToString(b.Bytes())
+	b.WriteByte(r.smallCursor)
+	b.Write(r.medium[:])
+	b.WriteByte(r.mediumCursor)
+	b.Write(r.large[:])
+	return ratchetSignifier + base64.RawURLEncoding.EncodeToString(b.Bytes())
 }
 
 func (r *SpiralRatchet) Key() Key {
 	// xor is associative, so order shouldn't matter
-	v := binaryXOR(binaryXOR(r.large, r.medium), r.small)
+	v := xor(xor(r.large, r.medium), r.small)
 	return sha256.Sum256(v[:])
 }
 
-// Advance increments the ratchet
-func (r *SpiralRatchet) Advance() {
-	nextSmall := sha256.Sum256(r.small[:]) // increment small
-	if nextSmall != r.smallCeil {
-		// advance small
-		r.small = nextSmall
+func (r *SpiralRatchet) Add1() {
+	if r.smallCursor >= 255 {
+		r.Add256()
 		return
 	}
-
-	// small == smallCeil
-	r.AdvanceMedium()
+	r.small = sha256.Sum256(r.small[:])
+	r.smallCursor++
 }
 
-// JumpMedium fast-forwards the ratchet through 256 advances (2^8)
-func (r *SpiralRatchet) AdvanceMedium() {
-	nextMedium := sha256.Sum256(r.medium[:]) // increment medium
-	// MUST reset small here.
-	small := sha256.Sum256(binaryCompliment(nextMedium)) // reset small
-
-	if nextMedium != r.mediumCeil {
-		// advance medium
-
-		*r = SpiralRatchet{
-			large:      r.large,
-			medium:     nextMedium,
-			mediumCeil: r.mediumCeil,
-			small:      small,
-			smallCeil:  smallCeil(small),
-		}
+func (r *SpiralRatchet) Add256() {
+	if r.mediumCursor >= 255 {
+		r.Add65536()
 		return
 	}
-
-	r.AdvanceLarge()
+	r.rolloverSmall()
+	r.medium = sha256.Sum256(r.medium[:])
+	r.mediumCursor++
 }
 
-func (r *SpiralRatchet) AdvanceLarge() {
-	// advance large
-	nextLarge := sha256.Sum256(r.large[:])
-	*r = *NewSpiralRatchetFromSeed(nextLarge)
+func (r *SpiralRatchet) Add65536() {
+	r.rolloverMedium()
+	r.large = sha256.Sum256(r.large[:])
 }
 
-func smallCeil(d [32]byte) [32]byte {
-	// ceiling is the first shasum after threshold (257th iteration)
-	for i := 0; i < 256; i++ {
-		d = sha256.Sum256(d[:])
-	}
-	return d
+func (r *SpiralRatchet) rolloverMedium() {
+	// TODO(b5): FIXME! this is incorrect. need to work through large field incrementing
+	r.medium = sha256.Sum256(compliement(r.large))
+	r.mediumCursor = 0
+	r.rolloverSmall()
 }
 
-func mediumCeil(d [32]byte) [32]byte {
-	// ceiling is the first shasum after threshold (257th iteration)
-	for i := 0; i < 257; i++ {
-		d = sha256.Sum256(d[:])
-	}
-	return d
+func (r *SpiralRatchet) rolloverSmall() {
+	r.small = sha256.Sum256(compliement(r.medium))
+	r.smallCursor = 0
 }
 
-func binaryXOR(a, b [32]byte) [32]byte {
+func xor(a, b [32]byte) [32]byte {
 	res := [32]byte{}
 	for i := 0; i < 32; i++ {
 		res[i] = a[i] ^ b[i]
@@ -175,7 +166,7 @@ func binaryXOR(a, b [32]byte) [32]byte {
 	return res
 }
 
-func binaryCompliment(d [32]byte) []byte {
+func compliement(d [32]byte) []byte {
 	res := make([]byte, 32)
 	for i, b := range d {
 		res[i] = ^b
