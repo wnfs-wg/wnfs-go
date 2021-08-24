@@ -22,6 +22,7 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/mitchellh/mapstructure v1.4.1
 	github.com/multiformats/go-multihash v0.0.15
+	github.com/nknorg/encrypted-stream v1.0.0 // indirect
 	github.com/qri-io/qfs v0.6.0
 	github.com/urfave/cli/v2 v2.3.0
 	github.com/xlab/treeprint v1.1.0
