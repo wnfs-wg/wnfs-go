@@ -1,38 +1,37 @@
 package wnfs
 
 import (
-	"bytes"
+	"context"
 	"io/ioutil"
 	"strings"
 	"testing"
+
+	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
 )
 
-func TestCryptoCoding(t *testing.T) {
-	plaintext := strings.Repeat("oh, hello!", 24512)
-	t.Logf("plaintext length: %d", len(plaintext))
-	key := testRootKey
+func TestCryptoFile(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	ef, err := newEncryptingFile(strings.NewReader(plaintext), key, fsFileInfo{})
+	store, err := mockipfs.MockMerkleDagStore(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	encrypted, err := ioutil.ReadAll(ef)
+	plaintext := strings.Repeat("oh hello. ", 1235340)
+	key := testRootKey[:]
+
+	res, err := store.PutEncryptedFile(NewMemfileBytes("", []byte(plaintext)), key)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// um, not exactly an industrial grade test
-	if plaintext == string(encrypted) {
-		t.Errorf("plaintext cannot equal encrypted text")
-	}
-
-	dr, err := newDecryptingReader(bytes.NewBuffer(encrypted), key)
+	f, err := store.GetEncryptedFile(res.Cid, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pt2, err := ioutil.ReadAll(dr)
+	pt2, err := ioutil.ReadAll(f)
 	if err != nil {
 		t.Fatal(err)
 	}

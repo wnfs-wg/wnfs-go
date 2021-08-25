@@ -96,16 +96,16 @@ func NewEmptyPrivateTree(fs merkleDagFS, parent BareNamefilter, name string) (*P
 func LoadPrivateTreeFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*PrivateTree, error) {
 	log.Debugw("LoadPrivateTreeFromCID", "name", name, "cid", id)
 
-	encryptedInfo, err := fs.DagStore().GetFile(id)
+	f, err := fs.DagStore().GetEncryptedFile(id, key[:])
 	if err != nil {
-		return nil, fmt.Errorf("loading header node %s:\n%w", id, err)
-	}
-	dr, err := newDecryptingReader(encryptedInfo, key)
-	if err != nil {
+		log.Debugw("LoadPrivateTreeFromCID", "err", err)
 		return nil, err
 	}
+	defer f.Close()
+
 	info := PrivateTreeInfo{}
-	if err := cbor.NewDecoder(dr).Decode(&info); err != nil {
+	if err := cbor.NewDecoder(f).Decode(&info); err != nil {
+		log.Debugw("LoadPrivateTreeFromCID", "err", err)
 		return nil, err
 	}
 
@@ -427,21 +427,7 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	fi := fsFileInfo{
-		name: pt.name,
-		size: pt.info.Size,
-		// TODO(b5):
-		// mode:  pf.info.Metadata.UnixMeta.Mode,
-		mtime: time.Unix(pt.info.Metadata.UnixMeta.Mtime, 0),
-		sys:   pt.fs,
-	}
-
-	ef, err := newEncryptingFile(buf, key, fi)
-	if err != nil {
-		return PutResult{}, err
-	}
-
-	res, err := store.PutFile(ef)
+	res, err := store.PutEncryptedFile(NewMemfileReader("", buf), key[:])
 	if err != nil {
 		return PutResult{}, err
 	}
@@ -523,17 +509,14 @@ func NewPrivateFile(fs merkleDagFS, parent BareNamefilter, f fs.File) (*PrivateF
 
 func LoadPrivateFileFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*PrivateFile, error) {
 	store := fs.DagStore()
-	enc, err := store.GetFile(id)
+	f, err := store.GetEncryptedFile(id, key[:])
 	if err != nil {
-		return nil, err
-	}
-	dr, err := newDecryptingReader(enc, key)
-	if err != nil {
+		log.Debugw("LoadPrivateFileFromCID", "err", err)
 		return nil, err
 	}
 
 	info := PrivateFileInfo{}
-	if err := cbor.NewDecoder(dr).Decode(&info); err != nil {
+	if err := cbor.NewDecoder(f).Decode(&info); err != nil {
 		return nil, err
 	}
 
@@ -544,11 +527,7 @@ func LoadPrivateFileFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*
 	info.Ratchet = ""
 
 	// TODO(b5): lazy-load on first call to Read()
-	encContent, err := store.GetFile(info.ContentID)
-	if err != nil {
-		return nil, err
-	}
-	r, err := newDecryptingReader(encContent, key)
+	content, err := store.GetEncryptedFile(info.ContentID, key[:])
 	if err != nil {
 		return nil, err
 	}
@@ -559,7 +538,7 @@ func LoadPrivateFileFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*
 		name:    name,
 		cid:     id,
 		info:    info,
-		content: r,
+		content: content,
 	}, nil
 }
 
@@ -610,21 +589,7 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 	pf.ratchet.Add1()
 	key := pf.ratchet.Key()
 
-	fi := fsFileInfo{
-		name: pf.name,
-		size: pf.info.Size,
-		// TODO(b5):
-		// mode:  pf.info.Metadata.UnixMeta.Mode,
-		mtime: time.Unix(pf.info.Metadata.UnixMeta.Mtime, 0),
-		sys:   pf.fs,
-	}
-	ef, err := newEncryptingFile(pf.content, key, fi)
-	if err != nil {
-		return PutResult{}, err
-	}
-
-	// encrypt file contents, add to store
-	res, err := store.PutFile(ef)
+	res, err := store.PutEncryptedFile(NewMemfileReader(pf.name, pf.content), key[:])
 	if err != nil {
 		return PutResult{}, err
 	}
@@ -640,13 +605,7 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	// re-use fi from content add
-	ef, err = newEncryptingFile(buf, key, fi)
-	if err != nil {
-		return PutResult{}, err
-	}
-
-	headerRes, err := store.PutFile(ef)
+	headerRes, err := store.PutEncryptedFile(NewMemfileReader(pf.name, buf), key[:])
 	if err != nil {
 		return PutResult{}, err
 	}

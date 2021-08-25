@@ -26,6 +26,9 @@ type MerkleDagStore interface {
 	// files
 	PutFile(f fs.File) (PutResult, error)
 	GetFile(root cid.Cid, path ...string) (io.ReadCloser, error)
+
+	PutEncryptedFile(f fs.File, key []byte) (PutResult, error)
+	GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error)
 }
 
 func GetBlockBytes(store MerkleDagStore, id cid.Cid) ([]byte, error) {
