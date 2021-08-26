@@ -27,8 +27,9 @@ import (
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 	multihash "github.com/multiformats/go-multihash"
-	"github.com/qri-io/qfs"
-	"github.com/qri-io/wnfs-go/mdstore"
+
+	qfs "github.com/qri-io/qfs"
+	mdstore "github.com/qri-io/wnfs-go/mdstore"
 )
 
 var (

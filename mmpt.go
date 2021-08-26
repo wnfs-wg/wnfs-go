@@ -186,6 +186,7 @@ func (t *MMPT) Members() (ms []Member, err error) {
 func (t *MMPT) Get(name string) (cid.Cid, error) {
 	nextName := t.nextTreeName(name)
 	if nextName == nil {
+		log.Debugw("MMPT.Get", "name", name, "err", ErrNotFound)
 		return cid.Cid{}, ErrNotFound
 	}
 

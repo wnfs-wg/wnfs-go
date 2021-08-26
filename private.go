@@ -2,18 +2,16 @@ package wnfs
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"path/filepath"
 	"sort"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	cid "github.com/ipfs/go-cid"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
@@ -96,20 +94,18 @@ func NewEmptyPrivateTree(fs merkleDagFS, parent BareNamefilter, name string) (*P
 }
 
 func LoadPrivateTreeFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*PrivateTree, error) {
-	log.Debugw("LoadPrivateTreeFromCID", "name", name, "cid", id, "key", key)
-	store := fs.DagStore()
-	encryptedInfo, err := store.GetFile(id)
-	if err != nil {
-		return nil, fmt.Errorf("loading header node %s:\n%w", id, err)
-	}
+	log.Debugw("LoadPrivateTreeFromCID", "name", name, "cid", id)
 
-	plainText, err := decrypt(encryptedInfo, key)
+	f, err := fs.DagStore().GetEncryptedFile(id, key[:])
 	if err != nil {
+		log.Debugw("LoadPrivateTreeFromCID", "err", err)
 		return nil, err
 	}
+	defer f.Close()
 
 	info := PrivateTreeInfo{}
-	if err := decodeCBOR(plainText, &info); err != nil {
+	if err := cbor.NewDecoder(f).Decode(&info); err != nil {
+		log.Debugw("LoadPrivateTreeFromCID", "err", err)
 		return nil, err
 	}
 
@@ -413,6 +409,7 @@ func (pt *PrivateTree) createOrUpdateChildFile(name string, f fs.File) (PutResul
 }
 
 func (pt *PrivateTree) Put() (PutResult, error) {
+	log.Debugw("PrivateTree.Put", "name", pt.name)
 	store := pt.fs.DagStore()
 
 	pt.ratchet.Add1()
@@ -420,17 +417,17 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 	pt.info.Ratchet = pt.ratchet.Encode()
 	pt.info.Size = pt.info.Links.SizeSum()
 
-	plainText, err := encodeCBOR(pt.info)
-	if err != nil {
+	// plainText, err := encodeCBOR(pt.info)
+	// if err != nil {
+	// 	return PutResult{}, err
+	// }
+
+	buf := &bytes.Buffer{}
+	if err := cbor.NewEncoder(buf).Encode(pt.info); err != nil {
 		return PutResult{}, err
 	}
 
-	enc, err := encrypt(key, plainText.Bytes())
-	if err != nil {
-		return PutResult{}, err
-	}
-
-	res, err := store.PutFile(NewMemfileBytes("", enc))
+	res, err := store.PutEncryptedFile(NewMemfileReader("", buf), key[:])
 	if err != nil {
 		return PutResult{}, err
 	}
@@ -445,7 +442,7 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 	}
 
 	pt.cid = res.Cid
-	log.Debugw("PrivateTree.Put", "name", pt.name, "cid", pt.cid.String(), "key", key, "size", pt.info.Size)
+	log.Debugw("PrivateTree.Put", "name", pt.name, "cid", pt.cid.String(), "size", pt.info.Size)
 	return PutResult{
 		Cid:     pt.cid,
 		Size:    pt.info.Size,
@@ -512,17 +509,14 @@ func NewPrivateFile(fs merkleDagFS, parent BareNamefilter, f fs.File) (*PrivateF
 
 func LoadPrivateFileFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*PrivateFile, error) {
 	store := fs.DagStore()
-	enc, err := store.GetFile(id)
+	f, err := store.GetEncryptedFile(id, key[:])
 	if err != nil {
-		return nil, err
-	}
-	headerPlainText, err := decrypt(enc, key)
-	if err != nil {
+		log.Debugw("LoadPrivateFileFromCID", "err", err)
 		return nil, err
 	}
 
 	info := PrivateFileInfo{}
-	if err := decodeCBOR(headerPlainText, &info); err != nil {
+	if err := cbor.NewDecoder(f).Decode(&info); err != nil {
 		return nil, err
 	}
 
@@ -532,12 +526,8 @@ func LoadPrivateFileFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*
 	}
 	info.Ratchet = ""
 
-	// TODO(b5): lol so bad
-	encContent, err := store.GetFile(info.ContentID)
-	if err != nil {
-		return nil, err
-	}
-	decContent, err := decrypt(encContent, key)
+	// TODO(b5): lazy-load on first call to Read()
+	content, err := store.GetEncryptedFile(info.ContentID, key[:])
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +538,7 @@ func LoadPrivateFileFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*
 		name:    name,
 		cid:     id,
 		info:    info,
-		content: ioutil.NopCloser(bytes.NewBuffer(decContent)),
+		content: content,
 	}, nil
 }
 
@@ -599,21 +589,7 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 	pf.ratchet.Add1()
 	key := pf.ratchet.Key()
 
-	plainText, err := ioutil.ReadAll(pf.content)
-	if err != nil {
-		return PutResult{}, err
-	}
-
-	if err := pf.content.Close(); err != nil {
-		return PutResult{}, err
-	}
-
-	// encrypt file contents, add to store
-	enc, err := encrypt(key, plainText)
-	if err != nil {
-		return PutResult{}, err
-	}
-	res, err := store.PutFile(NewMemfileBytes(pf.name, enc))
+	res, err := store.PutEncryptedFile(NewMemfileReader(pf.name, pf.content), key[:])
 	if err != nil {
 		return PutResult{}, err
 	}
@@ -624,15 +600,12 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 	pf.info.Ratchet = pf.ratchet.Encode()
 	pf.info.Metadata.UnixMeta.Mtime = Timestamp().Unix()
 
-	headerPlaintext, err := encodeCBOR(pf.info)
-	if err != nil {
+	buf := &bytes.Buffer{}
+	if err := cbor.NewEncoder(buf).Encode(pf.info); err != nil {
 		return PutResult{}, err
 	}
-	encHeader, err := encrypt(key, headerPlaintext.Bytes())
-	if err != nil {
-		return PutResult{}, err
-	}
-	headerRes, err := store.PutFile(NewMemfileBytes("", encHeader))
+
+	headerRes, err := store.PutEncryptedFile(NewMemfileReader(pf.name, buf), key[:])
 	if err != nil {
 		return PutResult{}, err
 	}
@@ -657,44 +630,6 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 		Key:      key,
 		Pointer:  privName,
 	}, nil
-}
-
-func newCipher(key Key) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
-}
-
-func encrypt(key Key, data []byte) ([]byte, error) {
-	gcm, err := newCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext, nil
-}
-
-func decrypt(enc io.ReadCloser, key Key) ([]byte, error) {
-	data, err := ioutil.ReadAll(enc)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := newCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := gcm.NonceSize()
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
 type INumber [32]byte
