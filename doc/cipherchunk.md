@@ -1,6 +1,6 @@
 # Storing Encrypted Data on IPFS
 
-How do we do encryption as-efficently-as possible on IPFS, a block-based merkelized file system?
+How do we do encryption efficently on IPFS, a block-based merkelized file system?
 
 ## 01. Chunking in IPFS
 
@@ -14,22 +14,30 @@ There are other chunking strategies like [rabin fingerprinting](https://github.c
 
 ## 02. Encryption Ciphers
 
-By "encryption" we really mean _Authenticated Encryption with Associated Data (AEAD)_.  A form of encryption which simultaneously assures the confidentiality and authenticity of data. Encryption algorithms are known as _ciphers_.
+By "encryption" we really mean _Authenticated Encryption with Associated Data (AEAD)_. A form of encryption which simultaneously assures the confidentiality and authenticity of data. Encryption algorithms are known as _ciphers_.
 
 Encryption comes in _streaming_ and _block_ flavours. Block modes break an input stream into blocks and encrypt each block with a distinct nonce, and often use state from the prior block to harden secrecy. In contrast, streaming encryption works byte-by-byte. While we do want streams, data in IPFS is persisted in blocks, then reconstructed into a byte stream during retrieval.
 
-Block ciphers are a natural fit for IPFS because it's already built around a block paradigm.
-
-There are numerous cipher algorithms in use today, all with a number of characteristics. For practical purposes it's worth zeroing in on one cipher/mode combination: `AES-GCM`/
+There are numerous cipher algorithms in use today, all with a number of characteristics. For practical purposes it's worth zeroing in on two cipher/mode combinations: `AES-GCM` and `ChaCha20-Poly1305`:
 
 #### AES-GCM
-The [Advanced Encryption Standard](https://en.wikipedia.org/wiki/Advanced_Encryption_Standard) running in [Galois-Counter Mode](https://en.wikipedia.org/wiki/Galois/Counter_Mode). It benefits from hardware accelleration,
+The [Advanced Encryption Standard](https://en.wikipedia.org/wiki/Advanced_Encryption_Standard) running in [Galois-Counter Mode](https://en.wikipedia.org/wiki/Galois/Counter_Mode). AES benefits from hardware accelleration on numbers chip architectures. When operating in GCM can be parallelized on both encryption and decryption:
 
 | Galois/counter (GCM)      |     |
 |---------------------------|-----|
 | Encryption parallelizable | Yes |
 | Decryption parallelizable | Yes |
 | Random read access        | Yes |
+
+#### ChaCha20-Poly1305
+> There are no secure encryption algorithms optimized for mobile browsers and APIs in TLS right now—these new ciphers fill that gap.
+[cloudflare blog post](https://blog.cloudflare.com/do-the-chacha-better-mobile-performance-with-cryptography/)
+
+> Poly1305 is a cryptographic message authentication code (MAC) created by Daniel J. Bernstein. It can be used to verify the data integrity and the authenticity of a message. A variant of Bernstein's Poly1305 that does not require AES has been standardized by the Internet Engineering Task Force in RFC 8439.
+[wikipedia](https://en.wikipedia.org/wiki/Poly1305)
+
+ChaCha20-Poly1305 used today in TLS, and provides solid performance in pure software. This makes it a good choice on mobile devices, which generally lack low level instructions for hardware-accellerated AES.
+
 
 ## 03. Cipherchunking
 
@@ -53,23 +61,24 @@ Cipherchunking has a few notable properties:
   * Because of this **encrypted data stored on IPFS will never "self-deduplicate" through hash collision the way plaintext does.**
 * Cipherchunking does not support UnixFS Directories. Directories must be defined in plaintext.
 * Cipherchunked files _can_ be stored within existing plaintext directories
+* cipherchunking can be used equally with both block and streaming ciphers. Cipherchunking aligns byte length to IPFS chunk size
 
+#### Performance
+When writing to IPFS data _must_ be chunked. If we want to write encrypted data to IPFS, it _must_ be encrypted, cipherchunking combines these two processes into the same step, decreasing the overall amount of memory allocations required when compared to encrypting data before chunking by re-using memory allocations already required by the chunker for encryption.
+
+Combining these steps drives optimizations in either chunking or encryption into the other. A parallelized DAG constructor when combined with a cipherchunker will yeild parallelized encryption, **even if the chosen cipher doesn't support parallelized encryption**.
 
 ## 04. Cipherfile
-
-Decrypting the data requires a _cipherfile_, a file that walks the DAG structure, using the same cipher to _decrypt_ each block as it's read. 
+Decrypting the data requires a _cipherfile_, a file that walks the DAG structure, using the same cipher to _decrypt_ each block as it's read.
 
 ## 05. Security Concerns
-
 Using the ciphers outlined here, It's important to **never use more than 2^32 random nonces with a given key** because of the risk of a repeat. For this reason, we shouldn't ever encrypt a DAG that's larger than ~4.2M blocks or 7.62939453125PiB if written as a single file. So... we don't support encrypted 7PiB files, or 7PiB worth of block data.
 
-But this 2^32 limit, **Keys should not be shared across files.** Keys are cheap to generate. Any system designed around keys should aim to construct and store one symmetric key per file.
+But this 2^32 limit, **Keys should not be shared across files.** Keys are relatively cheap to generate. **Any system designed around symmectric key encruption should aim to construct and store one symmetric key per file, or a similar level of granularity**.
 
-IPFS isn't designed to store, share, or create symmetric keys.
+IPFS isn't designed to store, share, or create symmetric keys. [Diffie-Hellman Key Exchange](https://en.wikipedia.org/wiki/Diffie–Hellman_key_exchange) is used in TLS for symmetric key exchange.
 
-
-## 06. Cipher Normalization
-
+#### Cipher Normalization
 We _could_ handle cipher suite selection by adding [Multicodecs](https://github.com/multiformats/multicodec) for various cipher suites:
 
 | cipher    | mode      | proposed name | proposed tag  | proposed code | note |
@@ -77,7 +86,9 @@ We _could_ handle cipher suite selection by adding [Multicodecs](https://github.
 | AES       | GCM       | aes-gcm       | aead          | ???           | security level (128/192/256bit) is key-dependant, not speficied in codec. |
 | ChaCha20  | Poly1305  | aes-gcm       | aead          | ???           |      |
 
-There are drawbacks to this approach. Recording the cipher type within the CID itself removes a layer of obfuscation, because an attacker knows exactly which algorithm was used to encrypt the data. Given that IPFS transmits data in a permissionless, public environment any attacker with access to block data encrypted with a compromised cipher will be able to decrypt the contents.
+We shouldn't do this. Given that cipherchunked data is generally easier for an attacker to acquire when stored on IPFS, and the protocol-level information leak of knowing that each block begins with a nonce, **the chosen cipher should be obfuscated**. This does **not** provide additional security, but added _secrecy_ can't hurt in this context. Cipher selection should be normalized out-of-band ideally utilizing techniques outlined in [JSON Web Encryption (JOSE)](https://datatracker.ietf.org/doc/rfc7516/?include_text=1) and it's Web3 counterpart [DAG-JOSE](https://github.com/ipld/specs/blob/master/block-layer/codecs/dag-jose.md). 
+
+In the event that a cipher is compromised, any attacker with access to block data and knowledge that the compromised cipher was used would be able to decrypt the contents.
 
 ## 07. Future research
 
@@ -102,13 +113,13 @@ Cipher normalization would require encoding data with a different CID multicodec
 * https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation
 * https://blog.cloudflare.com/do-the-chacha-better-mobile-performance-with-cryptography/
 
-## 09. Alternative ciphers
+## 09. Alternative ciphers and modes
 While researching cipherchunking a number of different ciphers have been considered:
 
-#### ChaCha20-Poly1305
-_removed from consideration because it's a streaming cipher._
 
-> There are no secure encryption algorithms optimized for mobile browsers and APIs in TLS right now—these new ciphers fill that gap.
-[cloudflare blog post](https://blog.cloudflare.com/do-the-chacha-better-mobile-performance-with-cryptography/)
+## Changelog
 
-Poly1305 is a cryptographic message authentication code (MAC) created by Daniel J. Bernstein. It can be used to verify the data integrity and the authenticity of a message. A variant of Bernstein's Poly1305 that does not require AES has been standardized by the Internet Engineering Task Force in RFC 8439.
+* **2021-08-27**
+  * moved ChaCha-Poly1305 back into the list of usable algos. @expede has pointed out there's little downside to using a streaming cipher on a block-sized amount of bytes
+  * recommend _against_ normalizing ciphers with multicodecs, added explination about why it's a bad idea
+  * added a section on performance
