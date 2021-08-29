@@ -2,6 +2,7 @@ package wnfs
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -125,11 +126,20 @@ func LoadPrivateTreeFromCID(fs merkleDagFS, name string, key Key, id cid.Cid) (*
 }
 
 func LoadPrivateTreeFromPrivateName(fs merkleDagFS, key Key, name string, pn PrivateName) (*PrivateTree, error) {
-	privateRoot, err := fs.MMPT().Get(string(pn))
+	exists, data, err := fs.HAMT().FindRaw(context.TODO(), string(pn))
 	if err != nil {
 		return nil, err
 	}
-	return LoadPrivateTreeFromCID(fs, name, key, privateRoot)
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	_, id, err := cid.CidFromBytes(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return LoadPrivateTreeFromCID(fs, name, key, id)
 }
 
 func (pt *PrivateTree) BareNamefilter() BareNamefilter { return pt.info.Bnf }
@@ -417,11 +427,6 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 	pt.info.Ratchet = pt.ratchet.Encode()
 	pt.info.Size = pt.info.Links.SizeSum()
 
-	// plainText, err := encodeCBOR(pt.info)
-	// if err != nil {
-	// 	return PutResult{}, err
-	// }
-
 	buf := &bytes.Buffer{}
 	if err := cbor.NewEncoder(buf).Encode(pt.info); err != nil {
 		return PutResult{}, err
@@ -437,7 +442,8 @@ func (pt *PrivateTree) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	if err := pt.fs.MMPT().Add(string(privName), res.Cid); err != nil {
+	idBytes := CborByteArray(res.Cid.Bytes())
+	if err := pt.fs.HAMT().Set(context.TODO(), string(privName), &idBytes); err != nil {
 		return PutResult{}, err
 	}
 
@@ -616,7 +622,8 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	if err := pf.fs.MMPT().Add(string(privName), headerRes.Cid); err != nil {
+	idBytes := CborByteArray(headerRes.Cid.Bytes())
+	if err := pf.fs.HAMT().Set(context.TODO(), string(privName), &idBytes); err != nil {
 		return PutResult{}, err
 	}
 

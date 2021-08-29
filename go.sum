@@ -186,6 +186,10 @@ github.com/fatih/color v1.7.0/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5Kwzbycv
 github.com/fatih/color v1.9.0 h1:8xPHl4/q1VyqGIPif1F+1V3Y3lSmrq01EabUW3CoW5s=
 github.com/fatih/color v1.9.0/go.mod h1:eQcE1qtQxscV5RaZvpXrrb8Drkc3/DdQ+uUYCNjL+zU=
 github.com/fd/go-nat v1.0.0/go.mod h1:BTBu/CKvMmOMUPkKVef1pngt2WFH/lg7E6yQnulfp6E=
+github.com/filecoin-project/go-hamt-ipld v0.1.5 h1:uoXrKbCQZ49OHpsTCkrThPNelC4W3LPEk0OrS/ytIBM=
+github.com/filecoin-project/go-hamt-ipld v0.1.5/go.mod h1:6Is+ONR5Cd5R6XZoCse1CWaXZc0Hdb/JeX+EQCQzX24=
+github.com/filecoin-project/go-hamt-ipld/v3 v3.1.0 h1:rVVNq0x6RGQIzCo1iiJlGFm9AGIZzeifggxtKMU7zmI=
+github.com/filecoin-project/go-hamt-ipld/v3 v3.1.0/go.mod h1:bxmzgT8tmeVQA1/gvBwFmYdT8SOFUwB3ovSUfG1Ux0g=
 github.com/flynn/go-shlex v0.0.0-20150515145356-3f9db97f8568/go.mod h1:xEzjJPgXI435gkrCt3MPfRiAkVrwSbHsst4LCFVfpJc=
 github.com/flynn/noise v0.0.0-20180327030543-2492fe189ae6/go.mod h1:1i71OnUq3iUe1ma7Lr6yG6/rjvM3emb6yoL7xLFzcVQ=
 github.com/flynn/noise v1.0.0 h1:DlTHqmzmvcEiKj+4RYo/imoswx/4r6iBlCMfVtrMXpQ=
@@ -383,6 +387,7 @@ github.com/ipfs/go-cid v0.0.2/go.mod h1:GHWU/WuQdMPmIosc4Yn1bcCT7dSeX4lBafM7iqUP
 github.com/ipfs/go-cid v0.0.3/go.mod h1:GHWU/WuQdMPmIosc4Yn1bcCT7dSeX4lBafM7iqUPQvM=
 github.com/ipfs/go-cid v0.0.4/go.mod h1:4LLaPOQwmk5z9LBgQnpkivrx8BJjUyGwTXCd5Xfj6+M=
 github.com/ipfs/go-cid v0.0.5/go.mod h1:plgt+Y5MnOey4vO4UlUazGqdbEXuFYitED67FexhXog=
+github.com/ipfs/go-cid v0.0.6-0.20200501230655-7c82f3b81c00/go.mod h1:plgt+Y5MnOey4vO4UlUazGqdbEXuFYitED67FexhXog=
 github.com/ipfs/go-cid v0.0.6/go.mod h1:6Ux9z5e+HpkQdckYoX1PG/6xqKspzlEIR5SDmgqgC/I=
 github.com/ipfs/go-cid v0.0.7 h1:ysQJVJA3fNDF1qigJbsSQOdjhVLsOEoPdh0+R97k3jY=
 github.com/ipfs/go-cid v0.0.7/go.mod h1:6Ux9z5e+HpkQdckYoX1PG/6xqKspzlEIR5SDmgqgC/I=
@@ -1270,6 +1275,8 @@ github.com/prometheus/procfs v0.6.0 h1:mxy4L2jP6qMonqmq+aTtOx1ifVWUgG/TAmntgbh3x
 github.com/prometheus/procfs v0.6.0/go.mod h1:cz+aTbrPOrUb4q7XlbU9ygM+/jj0fzG6c1xBZuNvfVA=
 github.com/prometheus/statsd_exporter v0.20.0 h1:M0hQphnq2WyWKS5CefQL8PqWwBOBPhiAkyLo5l4ZYvE=
 github.com/prometheus/statsd_exporter v0.20.0/go.mod h1:YL3FWCG8JBBtaUSxAg4Gz2ZYu22bS84XM89ZQXXTWmQ=
+github.com/qri-io/go-hamt-ipld/v3 v3.1.1-0.20210829174419-d5dd13402d27 h1:znsdz087Cw5rJ4EVKjkTXsfliecZ7T4TjPp7My75OTE=
+github.com/qri-io/go-hamt-ipld/v3 v3.1.1-0.20210829174419-d5dd13402d27/go.mod h1:I73x+dVxrFhEGMeBAFjYRHz3TMy5GGxt+/0ikF1cYSg=
 github.com/qri-io/go-ipfs-http-client v0.0.6-0.20200623125303-7a2eee881baa/go.mod h1:1+V9y6ZICu/bZiq9QRa/l77H6seb2sgcQYeELQAhZ24=
 github.com/qri-io/qfs v0.6.0 h1:Av7jD8srhxPfT7Be+BuKt6lbFHeu3c7D9MjfHhuEQFk=
 github.com/qri-io/qfs v0.6.0/go.mod h1:SU+DUq8+BfHNod1SXzmD8FrNLgPt42aKyQuO3fnFEQI=
@@ -1380,9 +1387,13 @@ github.com/warpfork/go-wish v0.0.0-20200122115046-b9ea61034e4a/go.mod h1:x6AKhvS
 github.com/whyrusleeping/base32 v0.0.0-20170828182744-c30ac30633cc h1:BCPnHtcboadS0DvysUuJXZ4lWVv5Bh5i7+tbIyi+ck4=
 github.com/whyrusleeping/base32 v0.0.0-20170828182744-c30ac30633cc/go.mod h1:r45hJU7yEoA81k6MWNhpMj/kms0n14dkzkxYHoB96UM=
 github.com/whyrusleeping/cbor-gen v0.0.0-20200123233031-1cdf64d27158/go.mod h1:Xj/M2wWU+QdTdRbu/L/1dIZY8/Wb2K9pAhtroQuxJJI=
+github.com/whyrusleeping/cbor-gen v0.0.0-20200504204219-64967432584d/go.mod h1:W5MvapuoHRP8rz4vxjwCK1pDqF1aQcWsV5PZ+AHbqdg=
 github.com/whyrusleeping/cbor-gen v0.0.0-20200710004633-5379fc63235d/go.mod h1:fgkXqYy7bV2cFeIEOkVTZS/WjXARfBqSH6Q2qHL33hQ=
+github.com/whyrusleeping/cbor-gen v0.0.0-20200806213330-63aa96ca5488/go.mod h1:fgkXqYy7bV2cFeIEOkVTZS/WjXARfBqSH6Q2qHL33hQ=
 github.com/whyrusleeping/cbor-gen v0.0.0-20210219115102-f37d292932f2 h1:bsUlNhdmbtlfdLVXAVfuvKQ01RnWAM09TVrJkI7NZs4=
 github.com/whyrusleeping/cbor-gen v0.0.0-20210219115102-f37d292932f2/go.mod h1:fgkXqYy7bV2cFeIEOkVTZS/WjXARfBqSH6Q2qHL33hQ=
+github.com/whyrusleeping/cbor-gen v0.0.0-20210713220151-be142a5ae1a8 h1:TEv7MId88TyIqIUL4hbf9otOookIolMxlEbN0ro671Y=
+github.com/whyrusleeping/cbor-gen v0.0.0-20210713220151-be142a5ae1a8/go.mod h1:fgkXqYy7bV2cFeIEOkVTZS/WjXARfBqSH6Q2qHL33hQ=
 github.com/whyrusleeping/chunker v0.0.0-20181014151217-fe64bd25879f h1:jQa4QT2UP9WYv2nzyawpKMOCl+Z/jW7djv2/J50lj9E=
 github.com/whyrusleeping/chunker v0.0.0-20181014151217-fe64bd25879f/go.mod h1:p9UJB6dDgdPgMJZs7UjUOdulKyRr9fqkS+6JKAInPy8=
 github.com/whyrusleeping/go-ctrlnet v0.0.0-20180313164037-f564fbbdaa95/go.mod h1:SJqKCCPXRfBFCwXjfNT/skfsceF7+MBFLI2OrvuRA7g=
