@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	cid "github.com/ipfs/go-cid"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	format "github.com/ipfs/go-ipld-format"
 )
 
@@ -29,6 +30,8 @@ type MerkleDagStore interface {
 
 	PutEncryptedFile(f fs.File, key []byte) (PutResult, error)
 	GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error)
+
+	Blockstore() blockstore.Blockstore
 }
 
 func GetBlockBytes(store MerkleDagStore, id cid.Cid) ([]byte, error) {

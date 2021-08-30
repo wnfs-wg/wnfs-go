@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
+	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
+	cbor "github.com/fxamacker/cbor/v2"
 	cid "github.com/ipfs/go-cid"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
-	"github.com/qri-io/wnfs-go/mdstore"
+	mdstore "github.com/qri-io/wnfs-go/mdstore"
 )
 
 var (
@@ -81,7 +83,7 @@ func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
 type merkleDagFS interface {
 	fs.FS
 	DagStore() mdstore.MerkleDagStore
-	MMPT() *MMPT
+	HAMT() *hamt.Node
 }
 
 type fileSystem struct {
@@ -115,9 +117,6 @@ func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rootKey Ke
 		return nil, err
 	}
 	if _, err := root.Private.Put(); err != nil {
-		return nil, err
-	}
-	if _, err := root.mmpt.Put(); err != nil {
 		return nil, err
 	}
 	if _, err := root.Put(); err != nil {
@@ -188,8 +187,8 @@ func (fsys *fileSystem) DagStore() mdstore.MerkleDagStore {
 	return fsys.store
 }
 
-func (fsys *fileSystem) MMPT() *MMPT {
-	return fsys.root.mmpt
+func (fsys *fileSystem) HAMT() *hamt.Node {
+	return fsys.root.hamt
 }
 
 func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
@@ -421,10 +420,11 @@ type rootTree struct {
 	id   cid.Cid
 	size int64
 
-	Pretty  *BareTree
-	Public  *PublicTree
-	Private *PrivateTree
-	mmpt    *MMPT
+	Pretty      *BareTree
+	Public      *PublicTree
+	Private     *PrivateTree
+	hamt        *hamt.Node
+	hamtRootCID *cid.Cid
 }
 
 func newEmptyRootTree(fs merkleDagFS, rootKey Key) (*rootTree, error) {
@@ -432,8 +432,13 @@ func newEmptyRootTree(fs merkleDagFS, rootKey Key) (*rootTree, error) {
 		fs:     fs,
 		Public: newEmptyPublicTree(fs, FileHierarchyNamePublic),
 		Pretty: &BareTree{},
-		mmpt:   NewMMPT(fs.DagStore(), mdstore.NewLinks()),
 	}
+
+	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(fs.DagStore().Blockstore()))
+	if err != nil {
+		return nil, err
+	}
+	root.hamt = hamtRoot
 
 	private, err := NewEmptyPrivateTree(fs, identityBareNamefilter(), FileHierarchyNamePrivate)
 	if err != nil {
@@ -463,28 +468,42 @@ func newRootTreeFromCID(fs merkleDagFS, id cid.Cid, rootKey Key, rootName Privat
 	}
 
 	var (
-		mmpt        *MMPT
-		privateTree *PrivateTree
+		hamtRoot      *hamt.Node
+		privateTree   *PrivateTree
+		ipldCBORStore = ipldcbor.NewCborStore(fs.DagStore().Blockstore())
 	)
 
-	if mmptLink := links.Get(FileHierarchyNamePrivate); mmptLink != nil {
-		mmpt, err = LoadMMPT(fs.DagStore(), mmptLink.Cid)
+	if hamtLink := links.Get(FileHierarchyNamePrivate); hamtLink != nil {
+		log.Debugw("loading HAMT", "cid", hamtLink.Cid)
+		hamtRoot, err = hamt.LoadNode(context.TODO(), ipldCBORStore, hamtLink.Cid)
 		if err != nil {
 			return nil, fmt.Errorf("opening private tree:\n%w", err)
 		}
 
 		if rootName != PrivateName("") {
-			if privateRoot, err := mmpt.Get(string(rootName)); err == nil {
-				privateTree, err = LoadPrivateTreeFromCID(fs, FileHierarchyNamePrivate, rootKey, privateRoot)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				return nil, fmt.Errorf("opening private root %s:\n%w", rootName, err)
+			data := CborByteArray{}
+			exists, err := hamtRoot.Find(context.TODO(), string(rootName), &data)
+			if err != nil {
+				return nil, fmt.Errorf("opening private root: %w", err)
+			} else if !exists {
+				return nil, fmt.Errorf("opening private root: %w", ErrNotFound)
+			}
+			_, privateRoot, err := cid.CidFromBytes([]byte(data))
+			if err != nil {
+				return nil, fmt.Errorf("reading CID bytes: %w", err)
+			}
+
+			// if privateRoot, err := mmpt.Get(string(rootName)); err == nil {
+			privateTree, err = LoadPrivateTreeFromCID(fs, FileHierarchyNamePrivate, rootKey, privateRoot)
+			if err != nil {
+				return nil, err
 			}
 		}
 	} else {
-		mmpt = NewMMPT(fs.DagStore(), mdstore.NewLinks())
+		hamtRoot, err = hamt.NewNode(ipldCBORStore)
+		if err != nil {
+			return nil, err
+		}
 		privateTree, err = NewEmptyPrivateTree(fs, identityBareNamefilter(), FileHierarchyNamePrivate)
 		if err != nil {
 			return nil, err
@@ -498,13 +517,29 @@ func newRootTreeFromCID(fs merkleDagFS, id cid.Cid, rootKey Key, rootName Privat
 		Public:  public,
 		Pretty:  &BareTree{}, // TODO(b5): finish pretty tree
 		Private: privateTree,
-		mmpt:    mmpt,
+		hamt:    hamtRoot,
 	}
 
 	return root, nil
 }
 
+func (r *rootTree) putHamt() error {
+	if r.hamt != nil {
+		id, err := r.hamt.Write(context.TODO())
+		if err != nil {
+			return err
+		}
+		log.Debugw("putting HAMT", "cid", id)
+		r.hamtRootCID = &id
+	}
+	return nil
+}
+
 func (r *rootTree) Put() (mdstore.PutResult, error) {
+	if err := r.putHamt(); err != nil {
+		return mdstore.PutResult{}, err
+	}
+
 	result, err := r.fs.DagStore().PutNode(r.Links())
 	if err != nil {
 		return result, err
@@ -522,8 +557,11 @@ func (r *rootTree) Links() mdstore.Links {
 		// mdstore.LinkFromNode(r.Pretty, FileHierarchyNamePretty, false),
 		mdstore.LinkFromNode(r.Public, FileHierarchyNamePublic, false),
 	)
-	if r.mmpt != nil && r.mmpt.Cid().Defined() {
-		links.Add(mdstore.LinkFromNode(r.mmpt, FileHierarchyNamePrivate, false))
+	if r.hamtRootCID != nil {
+		links.Add(mdstore.Link{
+			Name: FileHierarchyNamePrivate,
+			Cid:  *r.hamtRootCID,
+		})
 	}
 	return links
 }

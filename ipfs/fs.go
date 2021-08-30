@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipfs_config "github.com/ipfs/go-ipfs-config"
 	files "github.com/ipfs/go-ipfs-files"
 	ipfs_commands "github.com/ipfs/go-ipfs/commands"
@@ -295,6 +296,10 @@ func (fst *Filestore) GoOnline(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (fst *Filestore) Blockstore() blockstore.Blockstore {
+	return fst.node.Blockstore
 }
 
 // PinsetDifference returns a map of "Recursive"-pinned hashes that are not in

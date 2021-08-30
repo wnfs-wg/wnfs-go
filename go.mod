@@ -2,9 +2,13 @@ module github.com/qri-io/wnfs-go
 
 go 1.16
 
+// adds a node.Write(ctx) method. See: https://github.com/filecoin-project/go-hamt-ipld/pull/94
+replace github.com/filecoin-project/go-hamt-ipld/v3 => github.com/qri-io/go-hamt-ipld/v3 v3.1.1-0.20210829174419-d5dd13402d27
+
 require (
 	github.com/bits-and-blooms/bloom/v3 v3.0.1
 	github.com/dustin/go-humanize v1.0.0
+	github.com/filecoin-project/go-hamt-ipld/v3 v3.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.3.0
 	github.com/google/go-cmp v0.5.5
 	github.com/ipfs/go-blockservice v0.1.4
@@ -18,6 +22,7 @@ require (
 	github.com/ipfs/go-ipfs-files v0.0.8
 	github.com/ipfs/go-ipfs-pinner v0.1.1
 	github.com/ipfs/go-ipfs-posinfo v0.0.1
+	github.com/ipfs/go-ipld-cbor v0.0.5 // indirect
 	github.com/ipfs/go-ipld-format v0.2.0
 	github.com/ipfs/go-log v1.0.5
 	github.com/ipfs/go-merkledag v0.3.2
@@ -33,5 +38,6 @@ require (
 	github.com/multiformats/go-multihash v0.0.15
 	github.com/qri-io/qfs v0.6.0
 	github.com/urfave/cli/v2 v2.3.0
+	github.com/whyrusleeping/cbor-gen v0.0.0-20210713220151-be142a5ae1a8 // indirect
 	github.com/xlab/treeprint v1.1.0
 )
