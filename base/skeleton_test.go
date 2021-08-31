@@ -1,4 +1,4 @@
-package wnfs
+package base
 
 import (
 	"io/ioutil"
@@ -30,7 +30,7 @@ func TestSkeletonCBOR(t *testing.T) {
 	}
 
 	got := Skeleton{}
-	if err := decodeCBOR(data, &got); err != nil {
+	if err := DecodeCBOR(data, &got); err != nil {
 		t.Fatal(err)
 	}
 

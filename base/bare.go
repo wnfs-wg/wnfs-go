@@ -1,4 +1,4 @@
-package wnfs
+package base
 
 import (
 	"errors"
@@ -8,6 +8,8 @@ import (
 	cid "github.com/ipfs/go-cid"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
+
+var ErrNotFound = errors.New("not found")
 
 type BareFile struct {
 	store mdstore.MerkleDagStore
@@ -50,11 +52,11 @@ func (f *BareFile) Cid() cid.Cid         { return f.id }
 func (f *BareFile) Links() mdstore.Links { return mdstore.NewLinks() }
 
 func (f *BareFile) Write() (PutResult, error) {
-	return PutResult{}, errors.New("unifnished: BareFile.Write")
+	return nil, errors.New("unifnished: BareFile.Write")
 }
 
 func (f *BareFile) Stat() (fs.FileInfo, error) {
-	return fsFileInfo{
+	return FSFileInfo{
 		name: f.name,
 		size: f.size,
 		sys:  f.store,
@@ -115,7 +117,7 @@ func (t *BareTree) Close() error {
 	return nil
 }
 func (t *BareTree) Stat() (fs.FileInfo, error) {
-	return &fsFileInfo{
+	return &FSFileInfo{
 		name: t.name,
 		size: t.size,
 		// TODO(b5):
@@ -132,7 +134,7 @@ func (t *BareTree) ReadDir(n int) ([]fs.DirEntry, error) {
 
 	entries := make([]fs.DirEntry, 0, n)
 	for i, link := range t.links.SortedSlice() {
-		entries = append(entries, fsDirEntry{
+		entries = append(entries, FSDirEntry{
 			name:   link.Name,
 			isFile: link.IsFile,
 		})

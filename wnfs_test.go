@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	golog "github.com/ipfs/go-log"
+	base "github.com/qri-io/wnfs-go/base"
 	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
@@ -46,7 +47,7 @@ func TestPublicWNFS(t *testing.T) {
 
 		pathStr := "public/foo/hello.txt"
 		fileContents := []byte("hello!")
-		f := NewMemfileBytes("hello.txt", fileContents)
+		f := base.NewMemfileBytes("hello.txt", fileContents)
 
 		if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
 			t.Error(err)
@@ -76,8 +77,8 @@ func TestPublicWNFS(t *testing.T) {
 		}
 
 		_, err = fsys.Cat(pathStr)
-		if !errors.Is(err, ErrNotFound) {
-			t.Errorf("expected calling cat on removed path to return wrap of ErrNotFound. got: %s", err)
+		if !errors.Is(err, base.ErrNotFound) {
+			t.Errorf("expected calling cat on removed path to return wrap of base.ErrNotFound. got: %s", err)
 		}
 
 		if err := fsys.Mkdir("public/bar"); err != nil {
@@ -133,7 +134,7 @@ func BenchmarkPublicCat10MbFile(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	fsys.Write("public/bench.txt", textFile, MutationOptions{
 		Commit: true,
 	})
@@ -164,7 +165,7 @@ func BenchmarkPublicWrite10MbFile(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -192,7 +193,7 @@ func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	fsys.Write("public/subdir/bench.txt", textFile, MutationOptions{
 		Commit: true,
 	})
@@ -223,7 +224,7 @@ func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -295,7 +296,7 @@ func TestWNFSPrivate(t *testing.T) {
 
 	pathStr := "private/foo/hello.txt"
 	fileContents := []byte("hello!")
-	f := NewMemfileBytes("hello.txt", fileContents)
+	f := base.NewMemfileBytes("hello.txt", fileContents)
 
 	if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
 		t.Error(err)
@@ -325,8 +326,8 @@ func TestWNFSPrivate(t *testing.T) {
 	}
 
 	_, err = fsys.Cat(pathStr)
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("expected calling cat on removed path to return wrap of ErrNotFound. got: %s", err)
+	if !errors.Is(err, base.ErrNotFound) {
+		t.Errorf("expected calling cat on removed path to return wrap of base.ErrNotFound. got: %s", err)
 	}
 
 	if err := fsys.Mkdir("private/bar"); err != nil {
@@ -406,7 +407,7 @@ func BenchmarkPrivateCat10MbFile(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	fsys.Write("private/bench.txt", textFile, MutationOptions{
 		Commit: true,
 	})
@@ -437,7 +438,7 @@ func BenchmarkPrivateWrite10MbFile(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -465,7 +466,7 @@ func BenchmarkPrivateCat10MbFileSubdir(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	fsys.Write("private/subdir/bench.txt", textFile, MutationOptions{
 		Commit: true,
 	})
@@ -496,7 +497,7 @@ func BenchmarkPrivateWrite10MbFileSubdir(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -549,31 +550,5 @@ func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 
 	if _, err := fsys.Open("private/copy_me/dir_0/bench.txt"); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestPath(t *testing.T) {
-	p, err := NewPath("public/baz.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got, tail := p.Shift()
-	want := "public"
-	if want != got {
-		t.Errorf("result mismatch. want: %q got: %q", want, got)
-	}
-	wantTail := Path{"baz.txt"}
-	if diff := cmp.Diff(wantTail, tail); diff != "" {
-		t.Errorf("result mismatch, (-want +got):\n%s", diff)
-	}
-
-	got, tail = tail.Shift()
-	want = "baz.txt"
-	if want != got {
-		t.Errorf("result mismatch. want: %q got: %q", want, got)
-	}
-	if tail != nil {
-		t.Errorf("expected tail to equal nil. got: %v", tail)
 	}
 }

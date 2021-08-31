@@ -8,7 +8,7 @@ install:
 	cp wnfs /usr/local/bin/wnfs
 
 test:
-	go test --race -v --coverprofile=coverage.txt
+	go test --race --coverprofile=coverage.txt ./...
 
 coverage:
 	go tool cover --html=coverage.txt

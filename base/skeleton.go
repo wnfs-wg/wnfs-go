@@ -1,4 +1,4 @@
-package wnfs
+package base
 
 import (
 	"io/fs"
@@ -17,26 +17,26 @@ type SkeletonInfo struct {
 
 type Skeleton map[string]SkeletonInfo
 
-func loadSkeleton(store mdstore.MerkleDagStore, id cid.Cid) (Skeleton, error) {
+func LoadSkeleton(store mdstore.MerkleDagStore, id cid.Cid) (Skeleton, error) {
 	d, err := mdstore.GetBlockBytes(store, id)
 	if err != nil {
 		return nil, err
 	}
 
 	sk := Skeleton{}
-	return sk, decodeCBOR(d, &sk)
+	return sk, DecodeCBOR(d, &sk)
 }
 
 func (s Skeleton) CBORFile() (fs.File, error) {
-	buf, err := encodeCBOR(s)
+	buf, err := EncodeCBOR(s)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO(b5): use bareFile instead?
 	return &memfile{
-		fi: &fsFileInfo{
-			name:  skeletonLinkName,
+		fi: &FSFileInfo{
+			name:  SkeletonLinkName,
 			size:  int64(buf.Len()),
 			mode:  0755,
 			mtime: Timestamp(),
@@ -59,33 +59,33 @@ func (s Skeleton) PathInfo(path Path) (SkeletonInfo, error) {
 }
 
 type PrivateSkeletonInfo struct {
-	Id          cid.Cid
-	Key         string
-	SubSkeleton PrivateSkeleton
+	Id          cid.Cid         `json:"id"`
+	Key         string          `json:"key"`
+	SubSkeleton PrivateSkeleton `json:"subSkeleton"`
 }
 
 type PrivateSkeleton map[string]PrivateSkeletonInfo
 
-func loadPrivateSkeleton(store mdstore.MerkleDagStore, id cid.Cid, key string) (PrivateSkeleton, error) {
+func LoadPrivateSkeleton(store mdstore.MerkleDagStore, id cid.Cid, key string) (PrivateSkeleton, error) {
 	d, err := mdstore.GetBlockBytes(store, id)
 	if err != nil {
 		return nil, err
 	}
 
 	sk := PrivateSkeleton{}
-	return sk, decodeCBOR(d, &sk)
+	return sk, DecodeCBOR(d, &sk)
 }
 
 func (ps PrivateSkeleton) CBORFile(key *string) (fs.File, error) {
-	buf, err := encodeCBOR(ps)
+	buf, err := EncodeCBOR(ps)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO(b5): use bareFile instead?
 	return &memfile{
-		fi: &fsFileInfo{
-			name:  skeletonLinkName,
+		fi: &FSFileInfo{
+			name:  SkeletonLinkName,
 			size:  int64(buf.Len()),
 			mode:  0755,
 			mtime: Timestamp(),

@@ -13,7 +13,7 @@ import (
 	files "github.com/ipfs/go-ipfs-files"
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
-	"github.com/qri-io/wnfs-go"
+	base "github.com/qri-io/wnfs-go/base"
 	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
 )
 
@@ -30,7 +30,7 @@ func BenchmarkIPFSCat10MbFile(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := wnfs.NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	res, err := store.PutFile(textFile)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func BenchmarkIPFSWrite10MbFile(t *testing.B) {
 	if _, err := rand.Read(data); err != nil {
 		t.Fatal(err)
 	}
-	textFile := wnfs.NewMemfileBytes("bench.txt", data)
+	textFile := base.NewMemfileBytes("bench.txt", data)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {

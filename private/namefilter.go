@@ -1,4 +1,4 @@
-package wnfs
+package private
 
 import (
 	"bytes"
@@ -184,7 +184,7 @@ func bitCount32(num uint32) int {
 
 // root key should be
 // the identity bare name filter
-func identityBareNamefilter() BareNamefilter {
+func IdentityBareNamefilter() BareNamefilter {
 	sum := sha256.Sum256(make([]byte, 32))
 	f := bloom.New(2048, 30)
 	f.Add(sum[:])
