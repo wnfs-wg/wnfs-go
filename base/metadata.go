@@ -1,4 +1,4 @@
-package wnfs
+package base
 
 import (
 	"io/fs"
@@ -8,20 +8,12 @@ import (
 )
 
 const (
-	metadataLinkName = "metadata"
-	skeletonLinkName = "skeleton"
-	prettyLinkName   = "p"
-	previousLinkName = "previous"
-	userlandLinkName = "userland"
-)
-
-const (
-	unixNodeTypeRaw       = "raw"
-	unixNodeTypeDirectory = "dir"
-	unixNodeTypeFile      = "file"
-	unixNodeTypeMetadata  = "metadata"
-	unixNodeTypeSymlink   = "symlink"
-	unixNodeTypeHAMTShard = "hamtShard"
+	UnixNodeTypeRaw       = "raw"
+	UnixNodeTypeDirectory = "dir"
+	UnixNodeTypeFile      = "file"
+	UnixNodeTypeMetadata  = "metadata"
+	UnixNodeTypeSymlink   = "symlink"
+	UnixNodeTypeHAMTShard = "hamtShard"
 )
 
 type SemVer string
@@ -36,10 +28,10 @@ type UnixMeta struct {
 func NewUnixMeta(isFile bool) *UnixMeta {
 	ts := Timestamp().Unix()
 	mode := 644
-	t := unixNodeTypeFile
+	t := UnixNodeTypeFile
 	if !isFile {
 		mode = 755
-		t = unixNodeTypeDirectory
+		t = UnixNodeTypeDirectory
 	}
 
 	return &UnixMeta{
@@ -56,26 +48,26 @@ type Metadata struct {
 	Version  SemVer
 }
 
-func loadMetadata(store mdstore.MerkleDagStore, id cid.Cid) (*Metadata, error) {
+func LoadMetadata(store mdstore.MerkleDagStore, id cid.Cid) (*Metadata, error) {
 	d, err := mdstore.GetBlockBytes(store, id)
 	if err != nil {
 		return nil, err
 	}
 
 	md := &Metadata{}
-	err = decodeCBOR(d, md)
+	err = DecodeCBOR(d, md)
 	return md, err
 }
 
 func (md Metadata) CBORFile() (fs.File, error) {
-	buf, err := encodeCBOR(md)
+	buf, err := EncodeCBOR(md)
 	if err != nil {
 		return nil, err
 	}
 
 	return &memfile{
-		fi: &fsFileInfo{
-			name:  metadataLinkName,
+		fi: &FSFileInfo{
+			name:  MetadataLinkName,
 			size:  int64(buf.Len()),
 			mode:  0755,
 			mtime: Timestamp(),

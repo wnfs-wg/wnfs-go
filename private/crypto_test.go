@@ -1,4 +1,4 @@
-package wnfs
+package private
 
 import (
 	"context"
@@ -6,8 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qri-io/wnfs-go/base"
 	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
 )
+
+var testRootKey Key = [32]byte{
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
+	1, 2,
+}
 
 func TestCryptoFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -21,7 +29,7 @@ func TestCryptoFile(t *testing.T) {
 	plaintext := strings.Repeat("oh hello. ", 1235340)
 	key := testRootKey[:]
 
-	res, err := store.PutEncryptedFile(NewMemfileBytes("", []byte(plaintext)), key)
+	res, err := store.PutEncryptedFile(base.NewMemfileBytes("", []byte(plaintext)), key)
 	if err != nil {
 		t.Fatal(err)
 	}

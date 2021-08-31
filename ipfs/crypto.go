@@ -13,8 +13,8 @@ import (
 	ipld "github.com/ipfs/go-ipld-format"
 	dag "github.com/ipfs/go-merkledag"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
-	cipherchunker "github.com/qri-io/wnfs-go/cipherchunker"
-	cipherfile "github.com/qri-io/wnfs-go/cipherfile"
+	cipherchunker "github.com/qri-io/wnfs-go/ipfs/cipherchunker"
+	cipherfile "github.com/qri-io/wnfs-go/ipfs/cipherfile"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 )
 

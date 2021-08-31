@@ -10,7 +10,7 @@ https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation
 
 It's important to never use more than 2^32 random nonces with a given key because of the risk of a repeat. For this reason, we shouldn't ever encrypt a DAG that's larger than ~4.2M blocks or 7.62939453125PiB. So... we don't support encrypted 7PiB files. I think that'll be ok.
 
-## Block Cipher Mode of Operation
+## Block Cipher Modes of Operation
 
 Streaming encryption comes in two "flavours":
 * Galois/Counter Mode (GCM)

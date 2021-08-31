@@ -1,4 +1,4 @@
-package wnfs
+package private
 
 import (
 	"encoding/base64"

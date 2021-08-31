@@ -1,4 +1,4 @@
-package wnfs
+package base
 
 import (
 	cid "github.com/ipfs/go-cid"
@@ -12,14 +12,14 @@ type HistoryEntry struct {
 	Size     int64     `json:"size"`
 }
 
-func history(store mdstore.MerkleDagStore, n Node, max int) ([]HistoryEntry, error) {
+func History(store mdstore.MerkleDagStore, n Node, max int) ([]HistoryEntry, error) {
 	log := []HistoryEntry{
 		n.AsHistoryEntry(),
 	}
 
 	prev := log[0].Previous
 	for prev != nil {
-		ent, err := loadHistoryEntry(store, *prev)
+		ent, err := LoadHistoryEntry(store, *prev)
 		if err != nil {
 			return nil, err
 		}
@@ -34,7 +34,7 @@ func history(store mdstore.MerkleDagStore, n Node, max int) ([]HistoryEntry, err
 	return log, nil
 }
 
-func loadHistoryEntry(store mdstore.MerkleDagStore, id cid.Cid) (HistoryEntry, error) {
+func LoadHistoryEntry(store mdstore.MerkleDagStore, id cid.Cid) (HistoryEntry, error) {
 	node, err := store.GetNode(id)
 	if err != nil {
 		return HistoryEntry{}, err
@@ -45,10 +45,10 @@ func loadHistoryEntry(store mdstore.MerkleDagStore, id cid.Cid) (HistoryEntry, e
 		Cid:  id,
 		Size: node.Size(),
 	}
-	if mdLnk := links.Get(metadataLinkName); mdLnk != nil {
-		ent.Metadata, err = loadMetadata(store, mdLnk.Cid)
+	if mdLnk := links.Get(MetadataLinkName); mdLnk != nil {
+		ent.Metadata, err = LoadMetadata(store, mdLnk.Cid)
 	}
-	if prvLnk := links.Get(previousLinkName); prvLnk != nil {
+	if prvLnk := links.Get(PreviousLinkName); prvLnk != nil {
 		ent.Previous = &prvLnk.Cid
 	}
 	return ent, err

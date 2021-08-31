@@ -1,4 +1,4 @@
-package wnfs
+package private
 
 import (
 	"bytes"
@@ -39,7 +39,7 @@ func TestNamefilter(t *testing.T) {
 	// // if err != nil {
 	// // 	t.Fatal(err)
 	// // }
-	identity := identityBareNamefilter()
+	identity := IdentityBareNamefilter()
 	root, err := NewBareNamefilter(identity, inumber)
 	if err != nil {
 		t.Fatal(err)
