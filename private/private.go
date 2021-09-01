@@ -24,13 +24,15 @@ import (
 
 var log = golog.Logger("wnfs")
 
-type PrivateFS interface {
+// FS is a *private* filestystem, with methods for externalizing private data
+type FS interface {
 	RootKey() Key
-	PrivateName() (PrivateName, error)
+	PrivateName() (Name, error)
 }
 
 type Root struct {
-	*PrivateTree
+	*Tree
+	ctx         context.Context
 	store       mdstore.MerkleDagStore
 	hamt        *hamt.Node
 	hamtRootCID *cid.Cid
@@ -44,13 +46,14 @@ var (
 	_ fs.ReadDirFile          = (*Root)(nil)
 )
 
-func NewEmptyRoot(store mdstore.MerkleDagStore, name string, rootKey Key) (*Root, error) {
+func NewEmptyRoot(ctx context.Context, store mdstore.MerkleDagStore, name string, rootKey Key) (*Root, error) {
 	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(store.Blockstore()))
 	if err != nil {
 		return nil, err
 	}
 
 	root := &Root{
+		ctx:   ctx,
 		store: store,
 		hamt:  hamtRoot,
 	}
@@ -59,28 +62,28 @@ func NewEmptyRoot(store mdstore.MerkleDagStore, name string, rootKey Key) (*Root
 	if err != nil {
 		return nil, err
 	}
-	root.PrivateTree = private
+	root.Tree = private
 	return root, nil
 }
 
-func LoadRoot(store mdstore.MerkleDagStore, name string, hamtCID cid.Cid, rootKey Key, rootName PrivateName) (*Root, error) {
+func LoadRoot(ctx context.Context, store mdstore.MerkleDagStore, name string, hamtCID cid.Cid, rootKey Key, rootName Name) (*Root, error) {
 	var (
 		hamtRoot      *hamt.Node
-		privateTree   *PrivateTree
+		privateTree   *Tree
 		ipldCBORStore = ipldcbor.NewCborStore(store.Blockstore())
 	)
-	if rootName == PrivateName("") {
+	if rootName == Name("") {
 		return nil, fmt.Errorf("privateName is required")
 	}
 
 	log.Debugw("loading HAMT", "cid", hamtCID)
-	hamtRoot, err := hamt.LoadNode(context.TODO(), ipldCBORStore, hamtCID)
+	hamtRoot, err := hamt.LoadNode(ctx, ipldCBORStore, hamtCID)
 	if err != nil {
 		return nil, fmt.Errorf("opening private root:\n%w", err)
 	}
 
 	data := CborByteArray{}
-	exists, err := hamtRoot.Find(context.TODO(), string(rootName), &data)
+	exists, err := hamtRoot.Find(ctx, string(rootName), &data)
 	if err != nil {
 		return nil, fmt.Errorf("opening private root: %w", err)
 	} else if !exists {
@@ -92,8 +95,9 @@ func LoadRoot(store mdstore.MerkleDagStore, name string, hamtCID cid.Cid, rootKe
 	}
 
 	root := &Root{
+		ctx:         ctx,
 		store:       store,
-		PrivateTree: privateTree,
+		Tree:        privateTree,
 		hamt:        hamtRoot,
 		hamtRootCID: &hamtCID,
 	}
@@ -103,10 +107,11 @@ func LoadRoot(store mdstore.MerkleDagStore, name string, hamtCID cid.Cid, rootKe
 	if err != nil {
 		return nil, err
 	}
-	root.PrivateTree = privateTree
+	root.Tree = privateTree
 	return root, nil
 }
 
+func (r *Root) Context() context.Context         { return r.ctx }
 func (r *Root) Cid() cid.Cid                     { return *r.hamtRootCID }
 func (r *Root) HAMT() *hamt.Node                 { return r.hamt }
 func (r *Root) DagStore() mdstore.MerkleDagStore { return r.store }
@@ -121,7 +126,7 @@ func (r *Root) Open(pathStr string) (fs.File, error) {
 }
 
 func (r *Root) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
-	res, err = r.PrivateTree.Add(path, f)
+	res, err = r.Tree.Add(path, f)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +134,7 @@ func (r *Root) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
 }
 
 func (r *Root) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.PutResult, err error) {
-	res, err = r.PrivateTree.Copy(path, srcPathStr, srcFS)
+	res, err = r.Tree.Copy(path, srcPathStr, srcFS)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +142,7 @@ func (r *Root) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.Pu
 }
 
 func (r *Root) Rm(path base.Path) (base.PutResult, error) {
-	res, err := r.PrivateTree.Rm(path)
+	res, err := r.Tree.Rm(path)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +150,7 @@ func (r *Root) Rm(path base.Path) (base.PutResult, error) {
 }
 
 func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
-	res, err = r.PrivateTree.Mkdir(path)
+	res, err = r.Tree.Mkdir(path)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +158,7 @@ func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
 }
 
 func (r *Root) Put() (base.PutResult, error) {
-	res, err := r.PrivateTree.Put()
+	res, err := r.Tree.Put()
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +168,7 @@ func (r *Root) Put() (base.PutResult, error) {
 
 func (r *Root) putHamt() error {
 	if r.hamt != nil {
-		id, err := r.hamt.Write(context.TODO())
+		id, err := r.hamt.Write(r.ctx)
 		if err != nil {
 			return err
 		}
@@ -173,7 +178,7 @@ func (r *Root) putHamt() error {
 	return nil
 }
 
-type PrivateTreeInfo struct {
+type TreeInfo struct {
 	INum     INumber
 	Size     int64
 	Bnf      BareNamefilter
@@ -182,37 +187,37 @@ type PrivateTreeInfo struct {
 	Metadata *base.Metadata
 }
 
-type PrivateTree struct {
+type Tree struct {
 	fs      base.PrivateMerkleDagFS
 	ratchet *SpiralRatchet
 	name    string  // not stored on the node. used to satisfy fs.File interface
 	cid     cid.Cid // header node cid this tree was loaded from. empty if unstored
 	// header
-	info PrivateTreeInfo
+	info TreeInfo
 
 	// TODO(b5): private history
 	// history History
 }
 
 var (
-	_ mdstore.DagNode = (*PrivateTree)(nil)
-	_ base.Tree       = (*PrivateTree)(nil)
-	_ fs.File         = (*PrivateTree)(nil)
-	_ fs.ReadDirFile  = (*PrivateTree)(nil)
+	_ mdstore.DagNode = (*Tree)(nil)
+	_ base.Tree       = (*Tree)(nil)
+	_ fs.File         = (*Tree)(nil)
+	_ fs.ReadDirFile  = (*Tree)(nil)
 )
 
-func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string) (*PrivateTree, error) {
+func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string) (*Tree, error) {
 	in := NewINumber()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
 		return nil, err
 	}
 
-	return &PrivateTree{
+	return &Tree{
 		fs:      fs,
 		ratchet: NewSpiralRatchet(),
 		name:    name,
-		info: PrivateTreeInfo{
+		info: TreeInfo{
 			INum:  in,
 			Bnf:   bnf,
 			Links: PrivateLinks{},
@@ -225,7 +230,7 @@ func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string
 	}, nil
 }
 
-func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*PrivateTree, error) {
+func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Tree, error) {
 	log.Debugw("LoadTree", "name", name, "cid", id)
 
 	f, err := fs.DagStore().GetEncryptedFile(id, key[:])
@@ -235,7 +240,7 @@ func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Pr
 	}
 	defer f.Close()
 
-	info := PrivateTreeInfo{}
+	info := TreeInfo{}
 	if err := cbor.NewDecoder(f).Decode(&info); err != nil {
 		log.Debugw("LoadTree", "err", err)
 		return nil, err
@@ -247,7 +252,7 @@ func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Pr
 	}
 	info.Ratchet = ""
 
-	return &PrivateTree{
+	return &Tree{
 		fs:      fs,
 		name:    name,
 		ratchet: ratchet,
@@ -256,8 +261,8 @@ func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Pr
 	}, nil
 }
 
-func LoadPrivateTreeFromPrivateName(fs base.PrivateMerkleDagFS, key Key, name string, pn PrivateName) (*PrivateTree, error) {
-	exists, data, err := fs.HAMT().FindRaw(context.TODO(), string(pn))
+func LoadTreeFromName(fs base.PrivateMerkleDagFS, key Key, name string, pn Name) (*Tree, error) {
+	exists, data, err := fs.HAMT().FindRaw(fs.Context(), string(pn))
 	if err != nil {
 		return nil, err
 	}
@@ -273,27 +278,27 @@ func LoadPrivateTreeFromPrivateName(fs base.PrivateMerkleDagFS, key Key, name st
 	return LoadTree(fs, name, key, id)
 }
 
-func (pt *PrivateTree) BareNamefilter() BareNamefilter { return pt.info.Bnf }
-func (pt *PrivateTree) INumber() INumber               { return pt.info.INum }
-func (pt *PrivateTree) Cid() cid.Cid                   { return pt.cid }
-func (pt *PrivateTree) Links() mdstore.Links           { return mdstore.NewLinks() } // TODO(b5): private links
-func (pt *PrivateTree) Size() int64                    { return pt.info.Size }
-func (pt *PrivateTree) AsHistoryEntry() base.HistoryEntry {
+func (pt *Tree) BareNamefilter() BareNamefilter { return pt.info.Bnf }
+func (pt *Tree) INumber() INumber               { return pt.info.INum }
+func (pt *Tree) Cid() cid.Cid                   { return pt.cid }
+func (pt *Tree) Links() mdstore.Links           { return mdstore.NewLinks() } // TODO(b5): private links
+func (pt *Tree) Size() int64                    { return pt.info.Size }
+func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
 		// TODO(b5): finish
 	}
 }
 
-func (pt *PrivateTree) PrivateName() (PrivateName, error) {
+func (pt *Tree) PrivateName() (Name, error) {
 	knf, err := AddKey(pt.info.Bnf, pt.ratchet.Key())
 	if err != nil {
 		return "", err
 	}
-	return ToPrivateName(knf)
+	return ToName(knf)
 }
-func (pt *PrivateTree) Key() Key { return pt.ratchet.Key() }
+func (pt *Tree) Key() Key { return pt.ratchet.Key() }
 
-func (pt *PrivateTree) Stat() (fs.FileInfo, error) {
+func (pt *Tree) Stat() (fs.FileInfo, error) {
 	return base.NewFSFileInfo(
 		pt.name,
 		pt.info.Size,
@@ -305,12 +310,12 @@ func (pt *PrivateTree) Stat() (fs.FileInfo, error) {
 	), nil
 }
 
-func (pt *PrivateTree) Read(p []byte) (n int, err error) {
+func (pt *Tree) Read(p []byte) (n int, err error) {
 	return -1, fmt.Errorf("cannot read directory")
 }
-func (pt *PrivateTree) Close() error { return nil }
+func (pt *Tree) Close() error { return nil }
 
-func (pt *PrivateTree) ReadDir(n int) ([]fs.DirEntry, error) {
+func (pt *Tree) ReadDir(n int) ([]fs.DirEntry, error) {
 	if n < 0 {
 		n = len(pt.info.Links)
 	}
@@ -326,8 +331,8 @@ func (pt *PrivateTree) ReadDir(n int) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
-func (pt *PrivateTree) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
-	log.Debugw("PrivateTree.Add", "path", path)
+func (pt *Tree) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
+	log.Debugw("Tree.Add", "path", path)
 	if len(path) == 0 {
 		return res, errors.New("invalid path: empty")
 	}
@@ -356,8 +361,8 @@ func (pt *PrivateTree) Add(path base.Path, f fs.File) (res base.PutResult, err e
 	return pt.Put()
 }
 
-func (pt *PrivateTree) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.PutResult, err error) {
-	log.Debugw("PrivateTree.copy", "path", path, "srcPath", srcPathStr)
+func (pt *Tree) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.PutResult, err error) {
+	log.Debugw("Tree.copy", "path", path, "srcPath", srcPathStr)
 	if len(path) == 0 {
 		return res, errors.New("invalid path: empty")
 	}
@@ -391,7 +396,7 @@ func (pt *PrivateTree) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res
 	return pt.Put()
 }
 
-func (pt *PrivateTree) Get(path base.Path) (fs.File, error) {
+func (pt *Tree) Get(path base.Path) (fs.File, error) {
 	head, tail := path.Shift()
 	if head == "" {
 		return pt, nil
@@ -413,13 +418,13 @@ func (pt *PrivateTree) Get(path base.Path) (fs.File, error) {
 	}
 
 	if link.IsFile {
-		return LoadPrivateFileFromCID(pt.fs, head, link.Key, link.Cid)
+		return LoadFileFromCID(pt.fs, head, link.Key, link.Cid)
 	}
 
 	return LoadTree(pt.fs, link.Name, link.Key, link.Cid)
 }
 
-func (pt *PrivateTree) Rm(path base.Path) (base.PutResult, error) {
+func (pt *Tree) Rm(path base.Path) (base.PutResult, error) {
 	head, tail := path.Shift()
 	if head == "" {
 		return nil, fmt.Errorf("invalid path: empty")
@@ -449,7 +454,7 @@ func (pt *PrivateTree) Rm(path base.Path) (base.PutResult, error) {
 	return pt.Put()
 }
 
-func (pt *PrivateTree) Mkdir(path base.Path) (res base.PutResult, err error) {
+func (pt *Tree) Mkdir(path base.Path) (res base.PutResult, err error) {
 	if len(path) < 1 {
 		return res, errors.New("invalid path: empty")
 	}
@@ -476,7 +481,7 @@ func (pt *PrivateTree) Mkdir(path base.Path) (res base.PutResult, err error) {
 	return pt.Put()
 }
 
-func (pt *PrivateTree) getOrCreateDirectChildTree(name string) (*PrivateTree, error) {
+func (pt *Tree) getOrCreateDirectChildTree(name string) (*Tree, error) {
 	link := pt.info.Links.Get(name)
 	if link == nil {
 		return NewEmptyTree(pt.fs, pt.info.Bnf, name)
@@ -485,7 +490,7 @@ func (pt *PrivateTree) getOrCreateDirectChildTree(name string) (*PrivateTree, er
 	return LoadTree(pt.fs, name, link.Key, link.Cid)
 }
 
-func (pt *PrivateTree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
+func (pt *Tree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -496,7 +501,7 @@ func (pt *PrivateTree) createOrUpdateChild(srcPathStr, name string, f fs.File, s
 	return pt.createOrUpdateChildFile(name, f)
 }
 
-func (pt *PrivateTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
+func (pt *Tree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
 	dir, ok := f.(fs.ReadDirFile)
 	if !ok {
 		return nil, fmt.Errorf("cannot read directory contents")
@@ -506,7 +511,7 @@ func (pt *PrivateTree) createOrUpdateChildDirectory(srcPathStr, name string, f f
 		return nil, fmt.Errorf("reading directory contents: %w", err)
 	}
 
-	var tree *PrivateTree
+	var tree *Tree
 	if link := pt.info.Links.Get(name); link != nil {
 		tree, err = LoadTree(pt.fs, link.Name, link.Key, link.Cid)
 		if err != nil {
@@ -529,9 +534,9 @@ func (pt *PrivateTree) createOrUpdateChildDirectory(srcPathStr, name string, f f
 	return res, nil
 }
 
-func (pt *PrivateTree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
+func (pt *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
 	if link := pt.info.Links.Get(name); link != nil {
-		previousFile, err := LoadPrivateFileFromCID(pt.fs, link.Name, link.Key, link.Cid)
+		previousFile, err := LoadFileFromCID(pt.fs, link.Name, link.Key, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -539,15 +544,15 @@ func (pt *PrivateTree) createOrUpdateChildFile(name string, f fs.File) (base.Put
 		return previousFile.Put()
 	}
 
-	ch, err := NewPrivateFile(pt.fs, pt.info.Bnf, f)
+	ch, err := NewFile(pt.fs, pt.info.Bnf, f)
 	if err != nil {
 		return nil, err
 	}
 	return ch.Put()
 }
 
-func (pt *PrivateTree) Put() (base.PutResult, error) {
-	log.Debugw("PrivateTree.Put", "name", pt.name)
+func (pt *Tree) Put() (base.PutResult, error) {
+	log.Debugw("Tree.Put", "name", pt.name)
 	store := pt.fs.DagStore()
 
 	pt.ratchet.Add1()
@@ -571,12 +576,12 @@ func (pt *PrivateTree) Put() (base.PutResult, error) {
 	}
 
 	idBytes := CborByteArray(res.Cid.Bytes())
-	if err := pt.fs.HAMT().Set(context.TODO(), string(privName), &idBytes); err != nil {
+	if err := pt.fs.HAMT().Set(pt.fs.Context(), string(privName), &idBytes); err != nil {
 		return nil, err
 	}
 
 	pt.cid = res.Cid
-	log.Debugw("PrivateTree.Put", "name", pt.name, "cid", pt.cid.String(), "size", pt.info.Size)
+	log.Debugw("Tree.Put", "name", pt.name, "cid", pt.cid.String(), "size", pt.info.Size)
 	return PutResult{
 		PutResult: public.PutResult{
 			Cid:  pt.cid,
@@ -587,26 +592,26 @@ func (pt *PrivateTree) Put() (base.PutResult, error) {
 	}, nil
 }
 
-func (pt *PrivateTree) updateUserlandLink(name string, res base.PutResult) {
+func (pt *Tree) updateUserlandLink(name string, res base.PutResult) {
 	pt.info.Links.Add(res.(PutResult).ToPrivateLink(name))
 	pt.info.Metadata.UnixMeta.Mtime = base.Timestamp().Unix()
 }
 
-func (pt *PrivateTree) removeUserlandLink(name string) {
+func (pt *Tree) removeUserlandLink(name string) {
 	pt.info.Links.Remove(name)
 	pt.info.Metadata.UnixMeta.Mtime = base.Timestamp().Unix()
 }
 
-type PrivateFile struct {
+type File struct {
 	fs      base.PrivateMerkleDagFS
 	ratchet *SpiralRatchet
 	name    string  // not persisted. used to implement fs.File interface
 	cid     cid.Cid // cid header was loaded from. empty if new
-	info    PrivateFileInfo
+	info    FileInfo
 	content io.ReadCloser
 }
 
-type PrivateFileInfo struct {
+type FileInfo struct {
 	INumber        INumber
 	Size           int64
 	BareNamefilter BareNamefilter
@@ -615,20 +620,20 @@ type PrivateFileInfo struct {
 	ContentID      cid.Cid
 }
 
-var _ fs.File = (*PrivateFile)(nil)
+var _ fs.File = (*File)(nil)
 
-func NewPrivateFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File) (*PrivateFile, error) {
+func NewFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File) (*File, error) {
 	in := NewINumber()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
 		return nil, err
 	}
 
-	return &PrivateFile{
+	return &File{
 		fs:      fs,
 		ratchet: NewSpiralRatchet(),
 		content: f,
-		info: PrivateFileInfo{
+		info: FileInfo{
 			INumber:        in,
 			BareNamefilter: bnf,
 			Metadata: &base.Metadata{
@@ -640,15 +645,15 @@ func NewPrivateFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File
 	}, nil
 }
 
-func LoadPrivateFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*PrivateFile, error) {
+func LoadFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*File, error) {
 	store := fs.DagStore()
 	f, err := store.GetEncryptedFile(id, key[:])
 	if err != nil {
-		log.Debugw("LoadPrivateFileFromCID", "err", err)
+		log.Debugw("LoadFileFromCID", "err", err)
 		return nil, err
 	}
 
-	info := PrivateFileInfo{}
+	info := FileInfo{}
 	if err := cbor.NewDecoder(f).Decode(&info); err != nil {
 		return nil, err
 	}
@@ -665,7 +670,7 @@ func LoadPrivateFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id
 		return nil, err
 	}
 
-	return &PrivateFile{
+	return &File{
 		fs:      fs,
 		ratchet: ratchet,
 		name:    name,
@@ -675,27 +680,27 @@ func LoadPrivateFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id
 	}, nil
 }
 
-func (pf *PrivateFile) BareNamefilter() BareNamefilter { return pf.info.BareNamefilter }
-func (pf *PrivateFile) INumber() INumber               { return pf.info.INumber }
-func (pf *PrivateFile) Cid() cid.Cid                   { return pf.cid }
-func (pf *PrivateFile) Content() cid.Cid               { return pf.info.ContentID }
+func (pf *File) BareNamefilter() BareNamefilter { return pf.info.BareNamefilter }
+func (pf *File) INumber() INumber               { return pf.info.INumber }
+func (pf *File) Cid() cid.Cid                   { return pf.cid }
+func (pf *File) Content() cid.Cid               { return pf.info.ContentID }
 
-func (pf *PrivateFile) AsHistoryEntry() base.HistoryEntry {
+func (pf *File) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
 		// TODO(b5): finish
 	}
 }
 
-func (pf *PrivateFile) PrivateName() (PrivateName, error) {
+func (pf *File) Name() (Name, error) {
 	knf, err := AddKey(pf.info.BareNamefilter, pf.ratchet.Key())
 	if err != nil {
 		return "", err
 	}
-	return ToPrivateName(knf)
+	return ToName(knf)
 }
-func (pf *PrivateFile) Key() Key { return pf.ratchet.Key() }
+func (pf *File) Key() Key { return pf.ratchet.Key() }
 
-func (pf *PrivateFile) Stat() (fs.FileInfo, error) {
+func (pf *File) Stat() (fs.FileInfo, error) {
 	return base.NewFSFileInfo(
 		pf.name,
 		pf.info.Size,
@@ -707,14 +712,14 @@ func (pf *PrivateFile) Stat() (fs.FileInfo, error) {
 	), nil
 }
 
-func (pf *PrivateFile) Read(p []byte) (n int, err error) { return pf.content.Read(p) }
-func (pf *PrivateFile) Close() error                     { return pf.content.Close() }
+func (pf *File) Read(p []byte) (n int, err error) { return pf.content.Read(p) }
+func (pf *File) Close() error                     { return pf.content.Close() }
 
-func (pf *PrivateFile) SetContents(f fs.File) {
+func (pf *File) SetContents(f fs.File) {
 	pf.content = f
 }
 
-func (pf *PrivateFile) Put() (PutResult, error) {
+func (pf *File) Put() (PutResult, error) {
 	store := pf.fs.DagStore()
 
 	// generate a new version key by advancing the ratchet
@@ -745,17 +750,17 @@ func (pf *PrivateFile) Put() (PutResult, error) {
 	}
 
 	// create private name from key
-	privName, err := pf.PrivateName()
+	privName, err := pf.Name()
 	if err != nil {
 		return PutResult{}, err
 	}
 
 	idBytes := CborByteArray(headerRes.Cid.Bytes())
-	if err := pf.fs.HAMT().Set(context.TODO(), string(privName), &idBytes); err != nil {
+	if err := pf.fs.HAMT().Set(pf.fs.Context(), string(privName), &idBytes); err != nil {
 		return PutResult{}, err
 	}
 
-	log.Debugw("PrivateFile.Put", "name", pf.name, "cid", pf.cid.String(), "size", res.Size)
+	log.Debugw("File.Put", "name", pf.name, "cid", pf.cid.String(), "size", res.Size)
 	pf.cid = headerRes.Cid
 	return PutResult{
 		PutResult: public.PutResult{
@@ -786,7 +791,7 @@ func NewINumber() INumber {
 type PrivateLink struct {
 	mdstore.Link
 	Key     Key
-	Pointer PrivateName
+	Pointer Name
 }
 
 type PrivateLinks map[string]PrivateLink
@@ -834,7 +839,7 @@ type PutResult struct {
 	public.PutResult
 
 	Key     Key
-	Pointer PrivateName
+	Pointer Name
 }
 
 func (r PutResult) ToPrivateLink(name string) PrivateLink {

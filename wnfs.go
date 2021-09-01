@@ -57,7 +57,7 @@ type (
 	HistoryEntry = base.HistoryEntry
 	// PrivateName abstracts the private package, providing a uniform interface
 	// for wnfs that doesn't add a userland dependency
-	PrivateName = private.PrivateName
+	PrivateName = private.Name
 	// Key hoists up from the private package
 	Key = private.Key
 )
@@ -137,10 +137,11 @@ func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid, r
 	return fs, nil
 }
 
-func (fsys *fileSystem) Name() string         { return fsys.root.Name() }
-func (fsys *fileSystem) Cid() cid.Cid         { return fsys.root.Cid() }
-func (fsys *fileSystem) Size() int64          { return fsys.root.Size() }
-func (fsys *fileSystem) Links() mdstore.Links { return fsys.root.Links() }
+func (fsys *fileSystem) Context() context.Context { return fsys.ctx }
+func (fsys *fileSystem) Name() string             { return fsys.root.Name() }
+func (fsys *fileSystem) Cid() cid.Cid             { return fsys.root.Cid() }
+func (fsys *fileSystem) Size() int64              { return fsys.root.Size() }
+func (fsys *fileSystem) Links() mdstore.Links     { return fsys.root.Links() }
 
 func (fsys *fileSystem) Stat() (fs.FileInfo, error) {
 	return base.NewFSFileInfo(
@@ -379,7 +380,7 @@ func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
 		Pretty: &base.BareTree{},
 	}
 
-	privateRoot, err := private.NewEmptyRoot(fs.DagStore(), FileHierarchyNamePrivate, rootKey)
+	privateRoot, err := private.NewEmptyRoot(fs.Context(), fs.DagStore(), FileHierarchyNamePrivate, rootKey)
 	if err != nil {
 		return nil, err
 	}
@@ -408,12 +409,12 @@ func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName P
 	var privateRoot *private.Root
 
 	if hamtLink := links.Get(FileHierarchyNamePrivate); hamtLink != nil {
-		privateRoot, err = private.LoadRoot(fs.DagStore(), FileHierarchyNamePrivate, hamtLink.Cid, rootKey, rootName)
+		privateRoot, err = private.LoadRoot(fs.Context(), fs.DagStore(), FileHierarchyNamePrivate, hamtLink.Cid, rootKey, rootName)
 		if err != nil {
 			return nil, fmt.Errorf("opening private tree:\n%w", err)
 		}
 	} else {
-		privateRoot, err = private.NewEmptyRoot(fs.DagStore(), FileHierarchyNamePrivate, rootKey)
+		privateRoot, err = private.NewEmptyRoot(fs.Context(), fs.DagStore(), FileHierarchyNamePrivate, rootKey)
 		if err != nil {
 			return nil, err
 		}
