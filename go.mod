@@ -13,6 +13,7 @@ require (
 	github.com/google/go-cmp v0.5.5
 	github.com/ipfs/go-blockservice v0.1.4
 	github.com/ipfs/go-cid v0.0.7
+	github.com/ipfs/go-cidutil v0.0.2 // indirect
 	github.com/ipfs/go-datastore v0.4.5
 	github.com/ipfs/go-filestore v0.0.3
 	github.com/ipfs/go-ipfs v0.9.0

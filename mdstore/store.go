@@ -28,9 +28,12 @@ type MerkleDagStore interface {
 	PutFile(f fs.File) (PutResult, error)
 	GetFile(root cid.Cid, path ...string) (io.ReadCloser, error)
 
+	Blockstore() blockstore.Blockstore
+}
+
+type PrivateStore interface {
 	PutEncryptedFile(f fs.File, key []byte) (PutResult, error)
 	GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error)
-
 	Blockstore() blockstore.Blockstore
 }
 

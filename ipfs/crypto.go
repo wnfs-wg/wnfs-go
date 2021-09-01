@@ -40,7 +40,6 @@ func (fs *Filestore) GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, 
 		return nil, err
 	}
 
-	// func NewCipherFile(ctx context.Context, dserv ipld.DAGService, nd ipld.Node, auth cipher.AEAD) (files.Node, error) {
 	cf, err := cipherfile.NewCipherFile(fs.ctx, dag.NewReadOnlyDagService(ses), nd, auth)
 	if err != nil {
 		return nil, err

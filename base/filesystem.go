@@ -28,8 +28,9 @@ type MerkleDagFS interface {
 }
 
 type PrivateMerkleDagFS interface {
-	MerkleDagFS
+	Context() context.Context
 	HAMT() *hamt.Node
+	PrivateStore() mdstore.PrivateStore
 }
 
 type Node interface {

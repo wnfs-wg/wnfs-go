@@ -380,7 +380,12 @@ func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
 		Pretty: &base.BareTree{},
 	}
 
-	privateRoot, err := private.NewEmptyRoot(fs.Context(), fs.DagStore(), FileHierarchyNamePrivate, rootKey)
+	privStore, err := private.NewStore(fs.Context(), fs.DagStore().Blockstore())
+	if err != nil {
+		return nil, err
+	}
+
+	privateRoot, err := private.NewEmptyRoot(fs.Context(), privStore, FileHierarchyNamePrivate, rootKey)
 	if err != nil {
 		return nil, err
 	}
@@ -406,15 +411,20 @@ func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName P
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
+	privStore, err := private.NewStore(fs.Context(), fs.DagStore().Blockstore())
+	if err != nil {
+		return nil, err
+	}
+
 	var privateRoot *private.Root
 
 	if hamtLink := links.Get(FileHierarchyNamePrivate); hamtLink != nil {
-		privateRoot, err = private.LoadRoot(fs.Context(), fs.DagStore(), FileHierarchyNamePrivate, hamtLink.Cid, rootKey, rootName)
+		privateRoot, err = private.LoadRoot(fs.Context(), privStore, FileHierarchyNamePrivate, hamtLink.Cid, rootKey, rootName)
 		if err != nil {
 			return nil, fmt.Errorf("opening private tree:\n%w", err)
 		}
 	} else {
-		privateRoot, err = private.NewEmptyRoot(fs.Context(), fs.DagStore(), FileHierarchyNamePrivate, rootKey)
+		privateRoot, err = private.NewEmptyRoot(fs.Context(), privStore, FileHierarchyNamePrivate, rootKey)
 		if err != nil {
 			return nil, err
 		}
