@@ -23,8 +23,9 @@ type (
 	// a name filter with inumbers and a key, which serves as the revision
 	// identifier
 	KeyedNameFilter string
-	// a hashed name filter
-	PrivateName string
+	// a hashed name filter exported as "private.Name", private.Name is in fact
+	// a private value, and needs to be kept secret
+	Name string
 	// // a name filter with path elements & revision number in it, saturated
 	// // to ~320 bits
 	// SaturatedNamefilter string
@@ -72,7 +73,7 @@ func AddKey(bareFilter BareNamefilter, key Key) (knf KeyedNameFilter, err error)
 
 // saturate the filter to 320 bits and hash it with sha256 to give the private
 // name that a node will be stored in the MMPT with
-func ToPrivateName(knf KeyedNameFilter) (PrivateName, error) {
+func ToName(knf KeyedNameFilter) (Name, error) {
 	f, err := FromBase64(string(knf))
 	if err != nil {
 		return "", err
@@ -139,8 +140,8 @@ func sha256String(v []byte) string {
 }
 
 // hash a filter with sha256
-func toHash(f *bloom.BloomFilter) PrivateName {
-	return PrivateName(sha256String(toBytes(f)))
+func toHash(f *bloom.BloomFilter) Name {
+	return Name(sha256String(toBytes(f)))
 }
 
 func toBytes(f *bloom.BloomFilter) []byte {

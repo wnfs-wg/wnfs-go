@@ -1,6 +1,7 @@
 package base
 
 import (
+	"context"
 	"io/fs"
 
 	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
@@ -22,7 +23,12 @@ const LatestVersion = SemVer("2.0.0dev")
 
 type MerkleDagFS interface {
 	fs.FS
+	Context() context.Context
 	DagStore() mdstore.MerkleDagStore
+}
+
+type PrivateMerkleDagFS interface {
+	MerkleDagFS
 	HAMT() *hamt.Node
 }
 
