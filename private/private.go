@@ -12,36 +12,165 @@ import (
 	"sort"
 	"time"
 
+	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	"github.com/fxamacker/cbor/v2"
 	cid "github.com/ipfs/go-cid"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	"github.com/qri-io/wnfs-go/base"
 	"github.com/qri-io/wnfs-go/mdstore"
 	"github.com/qri-io/wnfs-go/public"
 )
 
-var log = golog.Logger("wnfs/public")
+var log = golog.Logger("wnfs")
 
 type PrivateFS interface {
 	RootKey() Key
 	PrivateName() (PrivateName, error)
 }
 
-type DecryptedNode interface {
-	base.Node
-	INumber() INumber
-	BareNamefilter() BareNamefilter
-	PrivateName() (PrivateName, error)
-	Key() Key
+type Root struct {
+	*PrivateTree
+	store       mdstore.MerkleDagStore
+	hamt        *hamt.Node
+	hamtRootCID *cid.Cid
 }
 
-type DecryptedFile interface {
-	DecryptedNode
-	Content() cid.Cid
+var (
+	_ base.PrivateMerkleDagFS = (*Root)(nil)
+	_ mdstore.DagNode         = (*Root)(nil)
+	_ base.Tree               = (*Root)(nil)
+	_ fs.File                 = (*Root)(nil)
+	_ fs.ReadDirFile          = (*Root)(nil)
+)
+
+func NewEmptyRoot(store mdstore.MerkleDagStore, name string, rootKey Key) (*Root, error) {
+	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(store.Blockstore()))
+	if err != nil {
+		return nil, err
+	}
+
+	root := &Root{
+		store: store,
+		hamt:  hamtRoot,
+	}
+
+	private, err := NewEmptyTree(root, IdentityBareNamefilter(), name)
+	if err != nil {
+		return nil, err
+	}
+	root.PrivateTree = private
+	return root, nil
 }
 
-type DecryptedTree interface {
-	DecryptedNode
+func LoadRoot(store mdstore.MerkleDagStore, name string, hamtCID cid.Cid, rootKey Key, rootName PrivateName) (*Root, error) {
+	var (
+		hamtRoot      *hamt.Node
+		privateTree   *PrivateTree
+		ipldCBORStore = ipldcbor.NewCborStore(store.Blockstore())
+	)
+	if rootName == PrivateName("") {
+		return nil, fmt.Errorf("privateName is required")
+	}
+
+	log.Debugw("loading HAMT", "cid", hamtCID)
+	hamtRoot, err := hamt.LoadNode(context.TODO(), ipldCBORStore, hamtCID)
+	if err != nil {
+		return nil, fmt.Errorf("opening private root:\n%w", err)
+	}
+
+	data := CborByteArray{}
+	exists, err := hamtRoot.Find(context.TODO(), string(rootName), &data)
+	if err != nil {
+		return nil, fmt.Errorf("opening private root: %w", err)
+	} else if !exists {
+		return nil, fmt.Errorf("opening private root: %w", base.ErrNotFound)
+	}
+	_, privateRoot, err := cid.CidFromBytes([]byte(data))
+	if err != nil {
+		return nil, fmt.Errorf("reading CID bytes: %w", err)
+	}
+
+	root := &Root{
+		store:       store,
+		PrivateTree: privateTree,
+		hamt:        hamtRoot,
+		hamtRootCID: &hamtCID,
+	}
+
+	// if privateRoot, err := mmpt.Get(string(rootName)); err == nil {
+	privateTree, err = LoadTree(root, name, rootKey, privateRoot)
+	if err != nil {
+		return nil, err
+	}
+	root.PrivateTree = privateTree
+	return root, nil
+}
+
+func (r *Root) Cid() cid.Cid                     { return *r.hamtRootCID }
+func (r *Root) HAMT() *hamt.Node                 { return r.hamt }
+func (r *Root) DagStore() mdstore.MerkleDagStore { return r.store }
+
+func (r *Root) Open(pathStr string) (fs.File, error) {
+	path, err := base.NewPath(pathStr)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.Get(path)
+}
+
+func (r *Root) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
+	res, err = r.PrivateTree.Add(path, f)
+	if err != nil {
+		return nil, err
+	}
+	return res, r.putHamt()
+}
+
+func (r *Root) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.PutResult, err error) {
+	res, err = r.PrivateTree.Copy(path, srcPathStr, srcFS)
+	if err != nil {
+		return nil, err
+	}
+	return res, r.putHamt()
+}
+
+func (r *Root) Rm(path base.Path) (base.PutResult, error) {
+	res, err := r.PrivateTree.Rm(path)
+	if err != nil {
+		return nil, err
+	}
+	return res, r.putHamt()
+}
+
+func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
+	res, err = r.PrivateTree.Mkdir(path)
+	if err != nil {
+		return nil, err
+	}
+	return res, r.putHamt()
+}
+
+func (r *Root) Put() (base.PutResult, error) {
+	res, err := r.PrivateTree.Put()
+	if err != nil {
+		return nil, err
+	}
+	err = r.putHamt()
+	return res, err
+}
+
+func (r *Root) putHamt() error {
+	if r.hamt != nil {
+		id, err := r.hamt.Write(context.TODO())
+		if err != nil {
+			return err
+		}
+		log.Debugw("writing HAMT", "cid", id)
+		r.hamtRootCID = &id
+	}
+	return nil
 }
 
 type PrivateTreeInfo struct {
@@ -54,7 +183,7 @@ type PrivateTreeInfo struct {
 }
 
 type PrivateTree struct {
-	fs      base.MerkleDagFS
+	fs      base.PrivateMerkleDagFS
 	ratchet *SpiralRatchet
 	name    string  // not stored on the node. used to satisfy fs.File interface
 	cid     cid.Cid // header node cid this tree was loaded from. empty if unstored
@@ -67,13 +196,12 @@ type PrivateTree struct {
 
 var (
 	_ mdstore.DagNode = (*PrivateTree)(nil)
-	_ DecryptedTree   = (*PrivateTree)(nil)
 	_ base.Tree       = (*PrivateTree)(nil)
 	_ fs.File         = (*PrivateTree)(nil)
 	_ fs.ReadDirFile  = (*PrivateTree)(nil)
 )
 
-func NewEmptyTree(fs base.MerkleDagFS, parent BareNamefilter, name string) (*PrivateTree, error) {
+func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string) (*PrivateTree, error) {
 	in := NewINumber()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
@@ -97,7 +225,7 @@ func NewEmptyTree(fs base.MerkleDagFS, parent BareNamefilter, name string) (*Pri
 	}, nil
 }
 
-func LoadTree(fs base.MerkleDagFS, name string, key Key, id cid.Cid) (*PrivateTree, error) {
+func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*PrivateTree, error) {
 	log.Debugw("LoadTree", "name", name, "cid", id)
 
 	f, err := fs.DagStore().GetEncryptedFile(id, key[:])
@@ -128,7 +256,7 @@ func LoadTree(fs base.MerkleDagFS, name string, key Key, id cid.Cid) (*PrivateTr
 	}, nil
 }
 
-func LoadPrivateTreeFromPrivateName(fs base.MerkleDagFS, key Key, name string, pn PrivateName) (*PrivateTree, error) {
+func LoadPrivateTreeFromPrivateName(fs base.PrivateMerkleDagFS, key Key, name string, pn PrivateName) (*PrivateTree, error) {
 	exists, data, err := fs.HAMT().FindRaw(context.TODO(), string(pn))
 	if err != nil {
 		return nil, err
@@ -470,7 +598,7 @@ func (pt *PrivateTree) removeUserlandLink(name string) {
 }
 
 type PrivateFile struct {
-	fs      base.MerkleDagFS
+	fs      base.PrivateMerkleDagFS
 	ratchet *SpiralRatchet
 	name    string  // not persisted. used to implement fs.File interface
 	cid     cid.Cid // cid header was loaded from. empty if new
@@ -487,12 +615,9 @@ type PrivateFileInfo struct {
 	ContentID      cid.Cid
 }
 
-var (
-	_ DecryptedFile = (*PrivateFile)(nil)
-	_ fs.File       = (*PrivateFile)(nil)
-)
+var _ fs.File = (*PrivateFile)(nil)
 
-func NewPrivateFile(fs base.MerkleDagFS, parent BareNamefilter, f fs.File) (*PrivateFile, error) {
+func NewPrivateFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File) (*PrivateFile, error) {
 	in := NewINumber()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
@@ -515,7 +640,7 @@ func NewPrivateFile(fs base.MerkleDagFS, parent BareNamefilter, f fs.File) (*Pri
 	}, nil
 }
 
-func LoadPrivateFileFromCID(fs base.MerkleDagFS, name string, key Key, id cid.Cid) (*PrivateFile, error) {
+func LoadPrivateFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*PrivateFile, error) {
 	store := fs.DagStore()
 	f, err := store.GetEncryptedFile(id, key[:])
 	if err != nil {

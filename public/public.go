@@ -14,7 +14,7 @@ import (
 	"github.com/qri-io/wnfs-go/mdstore"
 )
 
-var log = golog.Logger("wnfs/public")
+var log = golog.Logger("wnfs")
 
 type PublicTree struct {
 	fs   base.MerkleDagFS // embed a reference to store this tree is associated with

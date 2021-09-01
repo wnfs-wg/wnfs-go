@@ -8,9 +8,7 @@ import (
 	"io/ioutil"
 	"time"
 
-	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	cid "github.com/ipfs/go-cid"
-	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
@@ -185,10 +183,6 @@ func (fsys *fileSystem) PrivateName() (PrivateName, error) {
 
 func (fsys *fileSystem) DagStore() mdstore.MerkleDagStore {
 	return fsys.store
-}
-
-func (fsys *fileSystem) HAMT() *hamt.Node {
-	return fsys.root.hamt
 }
 
 func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
@@ -373,11 +367,9 @@ type rootTree struct {
 	id   cid.Cid
 	size int64
 
-	Pretty      *base.BareTree
-	Public      *public.PublicTree
-	Private     *private.PrivateTree
-	hamt        *hamt.Node
-	hamtRootCID *cid.Cid
+	Pretty  *base.BareTree
+	Public  *public.PublicTree
+	Private *private.Root
 }
 
 func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
@@ -387,18 +379,11 @@ func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
 		Pretty: &base.BareTree{},
 	}
 
-	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(fs.DagStore().Blockstore()))
+	privateRoot, err := private.NewEmptyRoot(fs.DagStore(), FileHierarchyNamePrivate, rootKey)
 	if err != nil {
 		return nil, err
 	}
-	root.hamt = hamtRoot
-
-	private, err := private.NewEmptyTree(fs, private.IdentityBareNamefilter(), FileHierarchyNamePrivate)
-	if err != nil {
-		return nil, err
-	}
-	root.Private = private
-
+	root.Private = privateRoot
 	return root, nil
 }
 
@@ -420,44 +405,15 @@ func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName P
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
-	var (
-		hamtRoot      *hamt.Node
-		privateTree   *private.PrivateTree
-		ipldCBORStore = ipldcbor.NewCborStore(fs.DagStore().Blockstore())
-	)
+	var privateRoot *private.Root
 
 	if hamtLink := links.Get(FileHierarchyNamePrivate); hamtLink != nil {
-		log.Debugw("loading HAMT", "cid", hamtLink.Cid)
-		hamtRoot, err = hamt.LoadNode(context.TODO(), ipldCBORStore, hamtLink.Cid)
+		privateRoot, err = private.LoadRoot(fs.DagStore(), FileHierarchyNamePrivate, hamtLink.Cid, rootKey, rootName)
 		if err != nil {
 			return nil, fmt.Errorf("opening private tree:\n%w", err)
 		}
-
-		if rootName != PrivateName("") {
-			data := private.CborByteArray{}
-			exists, err := hamtRoot.Find(context.TODO(), string(rootName), &data)
-			if err != nil {
-				return nil, fmt.Errorf("opening private root: %w", err)
-			} else if !exists {
-				return nil, fmt.Errorf("opening private root: %w", base.ErrNotFound)
-			}
-			_, privateRoot, err := cid.CidFromBytes([]byte(data))
-			if err != nil {
-				return nil, fmt.Errorf("reading CID bytes: %w", err)
-			}
-
-			// if privateRoot, err := mmpt.Get(string(rootName)); err == nil {
-			privateTree, err = private.LoadTree(fs, FileHierarchyNamePrivate, rootKey, privateRoot)
-			if err != nil {
-				return nil, err
-			}
-		}
 	} else {
-		hamtRoot, err = hamt.NewNode(ipldCBORStore)
-		if err != nil {
-			return nil, err
-		}
-		privateTree, err = private.NewEmptyTree(fs, private.IdentityBareNamefilter(), FileHierarchyNamePrivate)
+		privateRoot, err = private.NewEmptyRoot(fs.DagStore(), FileHierarchyNamePrivate, rootKey)
 		if err != nil {
 			return nil, err
 		}
@@ -469,30 +425,13 @@ func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName P
 
 		Public:  public,
 		Pretty:  &base.BareTree{}, // TODO(b5): finish pretty tree
-		Private: privateTree,
-		hamt:    hamtRoot,
+		Private: privateRoot,
 	}
 
 	return root, nil
 }
 
-func (r *rootTree) putHamt() error {
-	if r.hamt != nil {
-		id, err := r.hamt.Write(context.TODO())
-		if err != nil {
-			return err
-		}
-		log.Debugw("putting HAMT", "cid", id)
-		r.hamtRootCID = &id
-	}
-	return nil
-}
-
 func (r *rootTree) Put() (mdstore.PutResult, error) {
-	if err := r.putHamt(); err != nil {
-		return mdstore.PutResult{}, err
-	}
-
 	result, err := r.fs.DagStore().PutNode(r.Links())
 	if err != nil {
 		return result, err
@@ -509,12 +448,7 @@ func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(
 		// mdstore.LinkFromNode(r.Pretty, FileHierarchyNamePretty, false),
 		mdstore.LinkFromNode(r.Public, FileHierarchyNamePublic, false),
+		mdstore.LinkFromNode(r.Private, FileHierarchyNamePrivate, false),
 	)
-	if r.hamtRootCID != nil {
-		links.Add(mdstore.Link{
-			Name: FileHierarchyNamePrivate,
-			Cid:  *r.hamtRootCID,
-		})
-	}
 	return links
 }
