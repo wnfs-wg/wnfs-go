@@ -33,7 +33,7 @@ type FS interface {
 type Root struct {
 	*Tree
 	ctx         context.Context
-	store       mdstore.MerkleDagStore
+	store       mdstore.PrivateStore
 	hamt        *hamt.Node
 	hamtRootCID *cid.Cid
 }
@@ -46,7 +46,7 @@ var (
 	_ fs.ReadDirFile          = (*Root)(nil)
 )
 
-func NewEmptyRoot(ctx context.Context, store mdstore.MerkleDagStore, name string, rootKey Key) (*Root, error) {
+func NewEmptyRoot(ctx context.Context, store mdstore.PrivateStore, name string, rootKey Key) (*Root, error) {
 	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(store.Blockstore()))
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func NewEmptyRoot(ctx context.Context, store mdstore.MerkleDagStore, name string
 	return root, nil
 }
 
-func LoadRoot(ctx context.Context, store mdstore.MerkleDagStore, name string, hamtCID cid.Cid, rootKey Key, rootName Name) (*Root, error) {
+func LoadRoot(ctx context.Context, store mdstore.PrivateStore, name string, hamtCID cid.Cid, rootKey Key, rootName Name) (*Root, error) {
 	var (
 		hamtRoot      *hamt.Node
 		privateTree   *Tree
@@ -111,10 +111,10 @@ func LoadRoot(ctx context.Context, store mdstore.MerkleDagStore, name string, ha
 	return root, nil
 }
 
-func (r *Root) Context() context.Context         { return r.ctx }
-func (r *Root) Cid() cid.Cid                     { return *r.hamtRootCID }
-func (r *Root) HAMT() *hamt.Node                 { return r.hamt }
-func (r *Root) DagStore() mdstore.MerkleDagStore { return r.store }
+func (r *Root) Context() context.Context           { return r.ctx }
+func (r *Root) Cid() cid.Cid                       { return *r.hamtRootCID }
+func (r *Root) HAMT() *hamt.Node                   { return r.hamt }
+func (r *Root) PrivateStore() mdstore.PrivateStore { return r.store }
 
 func (r *Root) Open(pathStr string) (fs.File, error) {
 	path, err := base.NewPath(pathStr)
@@ -233,7 +233,7 @@ func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string
 func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Tree, error) {
 	log.Debugw("LoadTree", "name", name, "cid", id)
 
-	f, err := fs.DagStore().GetEncryptedFile(id, key[:])
+	f, err := fs.PrivateStore().GetEncryptedFile(id, key[:])
 	if err != nil {
 		log.Debugw("LoadTree", "err", err)
 		return nil, err
@@ -553,7 +553,6 @@ func (pt *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult,
 
 func (pt *Tree) Put() (base.PutResult, error) {
 	log.Debugw("Tree.Put", "name", pt.name)
-	store := pt.fs.DagStore()
 
 	pt.ratchet.Add1()
 	key := pt.ratchet.Key()
@@ -565,7 +564,7 @@ func (pt *Tree) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
-	res, err := store.PutEncryptedFile(base.NewMemfileReader("", buf), key[:])
+	res, err := pt.fs.PrivateStore().PutEncryptedFile(base.NewMemfileReader("", buf), key[:])
 	if err != nil {
 		return nil, err
 	}
@@ -646,7 +645,7 @@ func NewFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File) (*Fil
 }
 
 func LoadFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*File, error) {
-	store := fs.DagStore()
+	store := fs.PrivateStore()
 	f, err := store.GetEncryptedFile(id, key[:])
 	if err != nil {
 		log.Debugw("LoadFileFromCID", "err", err)
@@ -720,7 +719,7 @@ func (pf *File) SetContents(f fs.File) {
 }
 
 func (pf *File) Put() (PutResult, error) {
-	store := pf.fs.DagStore()
+	store := pf.fs.PrivateStore()
 
 	// generate a new version key by advancing the ratchet
 	// TODO(b5): what happens if anything errors after advancing the ratchet?
