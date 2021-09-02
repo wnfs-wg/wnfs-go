@@ -104,7 +104,7 @@ func (cs *cipherStore) putEncryptedFile(f fs.File, auth cipher.AEAD) (ipld.Node,
 	}
 	prefix.MhType = mh.SHA2_256
 
-	spl, err := cipherchunker.NewCipherSplitter(f, auth, 1024*1024)
+	spl, err := cipherchunker.NewCipherSplitter(f, auth, 1024*256)
 	if err != nil {
 		return nil, err
 	}
