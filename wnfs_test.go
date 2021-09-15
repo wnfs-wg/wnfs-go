@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	cmp "github.com/google/go-cmp/cmp"
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
-	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
-	"github.com/qri-io/wnfs-go/mdstore"
+	mdstore "github.com/qri-io/wnfs-go/mdstore"
+	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
 )
 
 var testRootKey Key = [32]byte{
@@ -35,10 +35,7 @@ func TestPublicWNFS(t *testing.T) {
 	defer cancel()
 
 	t.Run("writes_files", func(t *testing.T) {
-		store, err := mockipfs.MockMerkleDagStore(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
+		store := newMemTestStore(ctx, t)
 
 		fsys, err := NewEmptyFS(ctx, store, testRootKey)
 		if err != nil {
@@ -120,11 +117,8 @@ func BenchmarkPublicCat10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -151,11 +145,8 @@ func BenchmarkPublicWrite10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -179,11 +170,8 @@ func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -210,11 +198,8 @@ func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -238,11 +223,8 @@ func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -284,11 +266,8 @@ func TestWNFSPrivate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -393,11 +372,8 @@ func BenchmarkPrivateCat10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -424,11 +400,8 @@ func BenchmarkPrivateWrite10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -452,11 +425,8 @@ func BenchmarkPrivateCat10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -483,11 +453,8 @@ func BenchmarkPrivateWrite10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -511,11 +478,8 @@ func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store, testRootKey)
 	if err != nil {
 		t.Fatal(err)
@@ -551,4 +515,43 @@ func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	if _, err := fsys.Open("private/copy_me/dir_0/bench.txt"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type fataler interface {
+	Name() string
+	Helper()
+	Fatal(args ...interface{})
+}
+
+func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
+	f.Helper()
+	store, err := mdstore.NewMerkleDagStore(ctx, mdstoremock.NewOfflineMemBlockservice())
+	if err != nil {
+		f.Fatal(err)
+	}
+	return store
+}
+
+func newMemTestPrivateStore(ctx context.Context, f fataler) mdstore.PrivateStore {
+	f.Helper()
+	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice())
+	if err != nil {
+		f.Fatal(err)
+	}
+	return store
+}
+
+func newFileTestStore(ctx context.Context, f fataler) (st mdstore.MerkleDagStore, cleanup func()) {
+	f.Helper()
+	bserv, cleanup, err := mdstoremock.NewOfflineFileBlockservice(f.Name())
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	store, err := mdstore.NewMerkleDagStore(ctx, bserv)
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	return store, cleanup
 }

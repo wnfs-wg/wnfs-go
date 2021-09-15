@@ -1,7 +1,9 @@
 package base
 
 import (
+	"context"
 	"io/fs"
+	"io/ioutil"
 
 	cid "github.com/ipfs/go-cid"
 	"github.com/qri-io/wnfs-go/mdstore"
@@ -17,8 +19,14 @@ type SkeletonInfo struct {
 
 type Skeleton map[string]SkeletonInfo
 
-func LoadSkeleton(store mdstore.MerkleDagStore, id cid.Cid) (Skeleton, error) {
-	d, err := mdstore.GetBlockBytes(store, id)
+func LoadSkeleton(ctx context.Context, store mdstore.MerkleDagStore, id cid.Cid) (Skeleton, error) {
+	f, err := store.GetFile(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	d, err := ioutil.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +74,14 @@ type PrivateSkeletonInfo struct {
 
 type PrivateSkeleton map[string]PrivateSkeletonInfo
 
-func LoadPrivateSkeleton(store mdstore.MerkleDagStore, id cid.Cid, key string) (PrivateSkeleton, error) {
-	d, err := mdstore.GetBlockBytes(store, id)
+func LoadPrivateSkeleton(ctx context.Context, store mdstore.MerkleDagStore, id cid.Cid, key string) (PrivateSkeleton, error) {
+	f, err := store.GetFile(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	d, err := ioutil.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}

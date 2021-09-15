@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/qri-io/wnfs-go/base"
-	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
+	mdstore "github.com/qri-io/wnfs-go/mdstore"
+	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
 )
 
 var testRootKey Key = [32]byte{
@@ -21,7 +22,7 @@ func TestCryptoFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mockipfs.MockMerkleDagStore(ctx)
+	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice())
 	if err != nil {
 		t.Fatal(err)
 	}

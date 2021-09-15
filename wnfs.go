@@ -341,7 +341,7 @@ func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error)
 		return nil, fmt.Errorf("node at %s doesn't support history", pathStr)
 	}
 
-	return base.History(fsys.store, fileNode, max)
+	return base.History(fsys.ctx, fsys.store, fileNode, max)
 }
 
 func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree, relPath base.Path, err error) {
@@ -351,6 +351,7 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 	}
 
 	head, tail := path.Shift()
+	log.Debugw("fsHierarchyDirectoryNode", "head", head, "path", path)
 	switch head {
 	case FileHierarchyNamePublic:
 		return fsys.root.Public, tail, nil
@@ -359,7 +360,7 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 	// case FileHierarchyNamePretty:
 	// 	return fsys.root.Pretty, relPath, nil
 	default:
-		return nil, path, errors.New("not a valid filesystem path")
+		return nil, path, fmt.Errorf("%q is not a valid filesystem path", path)
 	}
 }
 
@@ -380,7 +381,7 @@ func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
 		Pretty: &base.BareTree{},
 	}
 
-	privStore, err := private.NewStore(fs.Context(), fs.DagStore().Blockstore())
+	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice())
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +395,7 @@ func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
 }
 
 func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName PrivateName) (*rootTree, error) {
-	node, err := fs.DagStore().GetNode(id)
+	node, err := fs.DagStore().GetNode(fs.Context(), id)
 	if err != nil {
 		return nil, fmt.Errorf("loading header block %q:\n%w", id.String(), err)
 	}
@@ -411,7 +412,7 @@ func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName P
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
-	privStore, err := private.NewStore(fs.Context(), fs.DagStore().Blockstore())
+	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice())
 	if err != nil {
 		return nil, err
 	}

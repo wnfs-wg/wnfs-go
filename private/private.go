@@ -47,7 +47,7 @@ var (
 )
 
 func NewEmptyRoot(ctx context.Context, store mdstore.PrivateStore, name string, rootKey Key) (*Root, error) {
-	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(store.Blockstore()))
+	hamtRoot, err := hamt.NewNode(ipldcbor.NewCborStore(store.Blockservice().Blockstore()))
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func LoadRoot(ctx context.Context, store mdstore.PrivateStore, name string, hamt
 	var (
 		hamtRoot      *hamt.Node
 		privateTree   *Tree
-		ipldCBORStore = ipldcbor.NewCborStore(store.Blockstore())
+		ipldCBORStore = ipldcbor.NewCborStore(store.Blockservice().Blockstore())
 	)
 	if rootName == Name("") {
 		return nil, fmt.Errorf("privateName is required")
@@ -742,7 +742,6 @@ func (pf *File) Put() (PutResult, error) {
 	if err := cbor.NewEncoder(buf).Encode(pf.info); err != nil {
 		return PutResult{}, err
 	}
-
 	headerRes, err := store.PutEncryptedFile(base.NewMemfileReader(pf.name, buf), key[:])
 	if err != nil {
 		return PutResult{}, err
@@ -759,8 +758,8 @@ func (pf *File) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	log.Debugw("File.Put", "name", pf.name, "cid", pf.cid.String(), "size", res.Size)
 	pf.cid = headerRes.Cid
+	log.Debugw("File.Put", "name", pf.name, "cid", pf.cid.String(), "size", res.Size)
 	return PutResult{
 		PutResult: public.PutResult{
 			Cid:      headerRes.Cid,

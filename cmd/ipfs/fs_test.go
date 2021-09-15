@@ -14,7 +14,7 @@ import (
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 	base "github.com/qri-io/wnfs-go/base"
-	mockipfs "github.com/qri-io/wnfs-go/ipfs/mock"
+	mockipfs "github.com/qri-io/wnfs-go/cmd/ipfs/mock"
 )
 
 func BenchmarkIPFSCat10MbFile(t *testing.B) {

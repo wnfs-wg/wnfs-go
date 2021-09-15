@@ -18,7 +18,7 @@ import (
 	peer "github.com/libp2p/go-libp2p-core/peer"
 	pstore "github.com/libp2p/go-libp2p-peerstore"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
-	wnipfs "github.com/qri-io/wnfs-go/ipfs"
+	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
 

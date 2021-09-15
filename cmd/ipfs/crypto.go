@@ -1,6 +1,7 @@
 package ipfs
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"io"
@@ -12,9 +13,8 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipld "github.com/ipfs/go-ipld-format"
 	dag "github.com/ipfs/go-merkledag"
-	corepath "github.com/ipfs/interface-go-ipfs-core/path"
-	cipherchunker "github.com/qri-io/wnfs-go/ipfs/cipherchunker"
-	cipherfile "github.com/qri-io/wnfs-go/ipfs/cipherfile"
+	cipherchunker "github.com/qri-io/wnfs-go/cipherchunker"
+	cipherfile "github.com/qri-io/wnfs-go/cipherfile"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 )
 
@@ -27,20 +27,19 @@ func newAESGCMCipher(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func (fs *Filestore) GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error) {
+func (fs *Filestore) GetEncryptedFile(ctx context.Context, root cid.Cid, key []byte) (io.ReadCloser, error) {
 	auth, err := newAESGCMCipher(key)
 	if err != nil {
 		return nil, err
 	}
 
-	ses := dag.NewSession(fs.ctx, fs.node.DAG)
-
-	nd, err := ses.Get(fs.ctx, root)
+	ses := dag.NewSession(ctx, fs.node.DAG)
+	nd, err := ses.Get(ctx, root)
 	if err != nil {
 		return nil, err
 	}
 
-	cf, err := cipherfile.NewCipherFile(fs.ctx, dag.NewReadOnlyDagService(ses), nd, auth)
+	cf, err := cipherfile.NewCipherFile(ctx, dag.NewReadOnlyDagService(ses), nd, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -58,19 +57,19 @@ func (fs *Filestore) PutEncryptedFile(f fs.File, key []byte) (mdstore.PutResult,
 		return mdstore.PutResult{}, err
 	}
 
-	storedFile, err := fs.capi.Unixfs().Get(fs.ctx, corepath.IpfsPath(id))
-	if err != nil {
-		return mdstore.PutResult{}, err
-	}
+	// storedFile, err := fs.capi.Unixfs().Get(fs.ctx, corepath.IpfsPath(id))
+	// if err != nil {
+	// 	return mdstore.PutResult{}, err
+	// }
 
-	size, err := storedFile.Size()
-	if err != nil {
-		return mdstore.PutResult{}, err
-	}
+	// size, err := storedFile.Size()
+	// if err != nil {
+	// 	return mdstore.PutResult{}, err
+	// }
 
 	return mdstore.PutResult{
 		Cid:  id,
-		Size: size,
+		Size: 1,
 	}, nil
 }
 
