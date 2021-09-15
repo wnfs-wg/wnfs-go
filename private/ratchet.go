@@ -3,9 +3,10 @@ package private
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+
+	"golang.org/x/crypto/sha3"
 )
 
 // Flag the encoding. The default encoding is:
@@ -34,15 +35,15 @@ func NewSpiralRatchet() *SpiralRatchet {
 }
 
 func NewSpiralRatchetFromSeed(seed [32]byte) *SpiralRatchet {
-	medium := sha256.Sum256(compliement(seed))
-	small := sha256.Sum256(compliement(medium))
+	medium := hash(compliement(seed))
+	small := hash(compliement(medium))
 
 	// TODO (use crypto.Random to scramble small & medium)
 
 	return &SpiralRatchet{
-		large:  sha256.Sum256(seed[:]),
-		medium: sha256.Sum256(medium[:]),
-		small:  sha256.Sum256(small[:]),
+		large:  hash(seed[:]),
+		medium: hash(medium[:]),
+		small:  hash(small[:]),
 	}
 }
 
@@ -91,7 +92,7 @@ func (r *SpiralRatchet) Encode() string {
 func (r *SpiralRatchet) Key() Key {
 	// xor is associative, so order shouldn't matter
 	v := xor(xor(r.large, r.medium), r.small)
-	return sha256.Sum256(v[:])
+	return hash(v[:])
 }
 
 func (r *SpiralRatchet) Add1() {
@@ -99,7 +100,7 @@ func (r *SpiralRatchet) Add1() {
 		r.Add256()
 		return
 	}
-	r.small = sha256.Sum256(r.small[:])
+	r.small = hash(r.small[:])
 	r.smallCursor++
 }
 
@@ -109,25 +110,29 @@ func (r *SpiralRatchet) Add256() {
 		return
 	}
 	r.rolloverSmall()
-	r.medium = sha256.Sum256(r.medium[:])
+	r.medium = hash(r.medium[:])
 	r.mediumCursor++
 }
 
 func (r *SpiralRatchet) Add65536() {
 	r.rolloverMedium()
-	r.large = sha256.Sum256(r.large[:])
+	r.large = hash(r.large[:])
 }
 
 func (r *SpiralRatchet) rolloverMedium() {
 	// TODO(b5): FIXME! this is incorrect. need to work through large field incrementing
-	r.medium = sha256.Sum256(compliement(r.large))
+	r.medium = hash(compliement(r.large))
 	r.mediumCursor = 0
 	r.rolloverSmall()
 }
 
 func (r *SpiralRatchet) rolloverSmall() {
-	r.small = sha256.Sum256(compliement(r.medium))
+	r.small = hash(compliement(r.medium))
 	r.smallCursor = 0
+}
+
+func hash(d []byte) [32]byte {
+	return sha3.Sum256(d)
 }
 
 func xor(a, b [32]byte) [32]byte {

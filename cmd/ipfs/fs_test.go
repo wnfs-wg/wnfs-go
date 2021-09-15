@@ -38,7 +38,7 @@ func BenchmarkIPFSCat10MbFile(t *testing.B) {
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		f, err := store.GetFile(res.Cid)
+		f, err := store.GetFile(ctx, res.Cid)
 		if err != nil {
 			t.Fatal(err)
 		}
