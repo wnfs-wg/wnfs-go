@@ -1,6 +1,7 @@
 package base
 
 import (
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -34,8 +35,8 @@ func NewBareFile(store mdstore.MerkleDagStore, name string, r io.Reader) *BareFi
 	}
 }
 
-func BareFileFromCID(store mdstore.MerkleDagStore, id cid.Cid) (*BareFile, error) {
-	fs, err := store.GetFile(id)
+func BareFileFromCID(ctx context.Context, store mdstore.MerkleDagStore, id cid.Cid) (*BareFile, error) {
+	fs, err := store.GetFile(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -90,8 +91,8 @@ var (
 	_ fs.ReadDirFile  = (*BareTree)(nil)
 )
 
-func BareTreeFromCid(store mdstore.MerkleDagStore, name string, id cid.Cid) (*BareTree, error) {
-	nd, err := store.GetNode(id)
+func BareTreeFromCid(ctx context.Context, store mdstore.MerkleDagStore, name string, id cid.Cid) (*BareTree, error) {
+	nd, err := store.GetNode(ctx, id)
 	if err != nil {
 		return nil, err
 	}

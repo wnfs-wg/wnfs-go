@@ -1,4 +1,4 @@
-package private
+package mdstore
 
 import (
 	"context"
@@ -11,17 +11,21 @@ import (
 	blockservice "github.com/ipfs/go-blockservice"
 	cid "github.com/ipfs/go-cid"
 	cidutil "github.com/ipfs/go-cidutil"
-	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipld "github.com/ipfs/go-ipld-format"
 	dag "github.com/ipfs/go-merkledag"
 	merkledag "github.com/ipfs/go-merkledag"
 	balanced "github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
 	mh "github.com/multiformats/go-multihash"
-	cipherchunker "github.com/qri-io/wnfs-go/ipfs/cipherchunker"
-	cipherfile "github.com/qri-io/wnfs-go/ipfs/cipherfile"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
+	cipherchunker "github.com/qri-io/wnfs-go/cipherchunker"
+	cipherfile "github.com/qri-io/wnfs-go/cipherfile"
 )
+
+type PrivateStore interface {
+	PutEncryptedFile(f fs.File, key []byte) (PutResult, error)
+	GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error)
+	Blockservice() blockservice.BlockService
+}
 
 func newAESGCMCipher(key []byte) (cipher.AEAD, error) {
 	block, err := aes.NewCipher(key)
@@ -34,22 +38,22 @@ func newAESGCMCipher(key []byte) (cipher.AEAD, error) {
 
 // warning! cipherStore doesn't pin!
 type cipherStore struct {
-	ctx context.Context
-	bs  blockstore.Blockstore
-	dag ipld.DAGService
+	ctx   context.Context
+	bserv blockservice.BlockService
+	dag   ipld.DAGService
 }
 
-var _ mdstore.PrivateStore = (*cipherStore)(nil)
+var _ PrivateStore = (*cipherStore)(nil)
 
-func NewStore(ctx context.Context, bs blockstore.Blockstore) (mdstore.PrivateStore, error) {
+func NewPrivateStore(ctx context.Context, bserv blockservice.BlockService) (PrivateStore, error) {
 	return &cipherStore{
-		ctx: ctx,
-		bs:  bs,
-		dag: merkledag.NewDAGService(blockservice.New(bs, nil)),
+		ctx:   ctx,
+		bserv: bserv,
+		dag:   merkledag.NewDAGService(bserv),
 	}, nil
 }
 
-func (cs *cipherStore) Blockstore() blockstore.Blockstore { return cs.bs }
+func (cs *cipherStore) Blockservice() blockservice.BlockService { return cs.bserv }
 
 func (cs *cipherStore) GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error) {
 	auth, err := newAESGCMCipher(key)
@@ -71,40 +75,55 @@ func (cs *cipherStore) GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser
 	return cf.(io.ReadCloser), nil
 }
 
-func (cs *cipherStore) PutEncryptedFile(f fs.File, key []byte) (mdstore.PutResult, error) {
+func (cs *cipherStore) PutEncryptedFile(f fs.File, key []byte) (PutResult, error) {
 	fi, err := f.Stat()
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return PutResult{}, err
 	}
 
 	if fi.IsDir() {
-		return mdstore.PutResult{}, fmt.Errorf("cannot write encrypted directories")
+		return PutResult{}, fmt.Errorf("cannot write encrypted directories")
 	}
 
 	auth, err := newAESGCMCipher(key)
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return PutResult{}, err
 	}
 
-	nd, err := cs.putEncryptedFile(f, auth)
+	sr := &sizeReader{r: f}
+
+	nd, err := cs.putEncryptedFile(sr, auth)
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return PutResult{}, err
 	}
 
-	return mdstore.PutResult{
+	return PutResult{
 		Cid:  nd.Cid(),
-		Size: fi.Size(),
+		Size: sr.Size(),
 	}, nil
 }
 
-func (cs *cipherStore) putEncryptedFile(f fs.File, auth cipher.AEAD) (ipld.Node, error) {
+type sizeReader struct {
+	size int
+	r    io.Reader
+}
+
+func (lr *sizeReader) Read(p []byte) (int, error) {
+	n, err := lr.r.Read(p)
+	lr.size += n
+	return n, err
+}
+
+func (lr *sizeReader) Size() int64 { return int64(lr.size) }
+
+func (cs *cipherStore) putEncryptedFile(r io.Reader, auth cipher.AEAD) (ipld.Node, error) {
 	prefix, err := merkledag.PrefixForCidVersion(1)
 	if err != nil {
 		return nil, err
 	}
 	prefix.MhType = mh.SHA2_256
 
-	spl, err := cipherchunker.NewCipherSplitter(f, auth, 1024*256)
+	spl, err := cipherchunker.NewCipherSplitter(r, auth, 1024*256)
 	if err != nil {
 		return nil, err
 	}

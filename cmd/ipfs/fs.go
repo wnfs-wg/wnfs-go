@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"io/ioutil"
 	"path/filepath"
 	"time"
 
+	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
-	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipfs_config "github.com/ipfs/go-ipfs-config"
 	files "github.com/ipfs/go-ipfs-files"
 	ipfs_commands "github.com/ipfs/go-ipfs/commands"
@@ -151,11 +152,8 @@ func (fst Filestore) Type() string {
 	return FilestoreType
 }
 
-func (fs *Filestore) GetNode(id cid.Cid, path ...string) (mdstore.DagNode, error) {
-	if len(path) > 0 {
-		return nil, fmt.Errorf("unsupported: path values on ipfs.Filestore.GetNode")
-	}
-	node, err := fs.capi.Dag().Get(fs.ctx, id)
+func (fs *Filestore) GetNode(ctx context.Context, id cid.Cid) (mdstore.DagNode, error) {
+	node, err := fs.capi.Dag().Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +185,10 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 		}
 		node.AddRawLink(name, lnk.IPLD())
 	}
+	if _, err := node.EncodeProtobuf(false); err != nil {
+		return mdstore.PutResult{}, err
+	}
+
 	err := fs.capi.Dag().Add(fs.ctx, node)
 	if err != nil {
 		return mdstore.PutResult{}, err
@@ -202,8 +204,12 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 	}, err
 }
 
-func (fs *Filestore) GetBlock(id cid.Cid) (io.Reader, error) {
-	return fs.capi.Block().Get(fs.ctx, corepath.IpfsPath(id))
+func (fs *Filestore) GetBlock(ctx context.Context, id cid.Cid) ([]byte, error) {
+	r, err := fs.capi.Block().Get(ctx, corepath.IpfsPath(id))
+	if err != nil {
+		return nil, err
+	}
+	return ioutil.ReadAll(r)
 }
 
 func (fs *Filestore) PutBlock(d []byte) (id cid.Cid, err error) {
@@ -236,8 +242,8 @@ func (fs *Filestore) PutFile(f fs.File) (mdstore.PutResult, error) {
 	}, nil
 }
 
-func (fs *Filestore) GetFile(root cid.Cid, path ...string) (io.ReadCloser, error) {
-	nd, err := fs.capi.Unixfs().Get(fs.ctx, corepath.IpfsPath(root))
+func (fs *Filestore) GetFile(ctx context.Context, root cid.Cid) (io.ReadCloser, error) {
+	nd, err := fs.capi.Unixfs().Get(ctx, corepath.IpfsPath(root))
 	if err != nil {
 		return nil, err
 	}
@@ -298,8 +304,8 @@ func (fst *Filestore) GoOnline(ctx context.Context) error {
 	return nil
 }
 
-func (fst *Filestore) Blockstore() blockstore.Blockstore {
-	return fst.node.Blockstore
+func (fst *Filestore) Blockservice() blockservice.BlockService {
+	return fst.node.Blocks
 }
 
 // PinsetDifference returns a map of "Recursive"-pinned hashes that are not in

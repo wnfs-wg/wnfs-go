@@ -1,6 +1,7 @@
 package base
 
 import (
+	"context"
 	"io/fs"
 
 	cid "github.com/ipfs/go-cid"
@@ -48,8 +49,8 @@ type Metadata struct {
 	Version  SemVer
 }
 
-func LoadMetadata(store mdstore.MerkleDagStore, id cid.Cid) (*Metadata, error) {
-	d, err := mdstore.GetBlockBytes(store, id)
+func LoadMetadata(ctx context.Context, store mdstore.MerkleDagStore, id cid.Cid) (*Metadata, error) {
+	d, err := store.GetBlock(ctx, id)
 	if err != nil {
 		return nil, err
 	}

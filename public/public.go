@@ -1,6 +1,7 @@
 package public
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -51,9 +52,10 @@ func NewEmptyTree(fs base.MerkleDagFS, name string) *PublicTree {
 }
 
 func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree, error) {
+	ctx := fs.Context()
 	log.Debugw("loadTreeFromCID", "name", name, "cid", id)
 	store := fs.DagStore()
-	header, err := store.GetNode(id)
+	header, err := store.GetNode(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("loading header node %s:\n%w", id, err)
 	}
@@ -64,7 +66,7 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 	if mdLnk == nil {
 		return nil, fmt.Errorf("header is missing %s link", base.MetadataLinkName)
 	}
-	md, err := base.LoadMetadata(store, mdLnk.Cid)
+	md, err := base.LoadMetadata(ctx, store, mdLnk.Cid)
 	if err != nil {
 		return nil, fmt.Errorf("loading %s data %s:\n%w", base.MetadataLinkName, mdLnk.Cid, err)
 	}
@@ -76,7 +78,7 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 	if skLnk == nil {
 		return nil, fmt.Errorf("header is missing %s link", base.SkeletonLinkName)
 	}
-	sk, err := base.LoadSkeleton(store, skLnk.Cid)
+	sk, err := base.LoadSkeleton(ctx, store, skLnk.Cid)
 	if err != nil {
 		return nil, fmt.Errorf("loading %s data %s:\n%w", base.SkeletonLinkName, skLnk.Cid, err)
 	}
@@ -90,7 +92,7 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 	if userlandLnk == nil {
 		return nil, fmt.Errorf("header is missing %s link", base.UserlandLinkName)
 	}
-	userland, err := store.GetNode(userlandLnk.Cid)
+	userland, err := store.GetNode(ctx, userlandLnk.Cid)
 	if err != nil {
 		return nil, fmt.Errorf("loading %s data %s:\n%w", base.UserlandLinkName, userlandLnk.Cid, err)
 	}
@@ -324,6 +326,7 @@ func (t *PublicTree) Rm(path base.Path) (base.PutResult, error) {
 
 func (t *PublicTree) Put() (base.PutResult, error) {
 	store := t.fs.DagStore()
+	ctx := t.fs.Context()
 	userlandResult, err := store.PutNode(t.userland)
 	if err != nil {
 		return nil, err
@@ -331,29 +334,31 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 
 	links := mdstore.NewLinks(userlandResult.ToLink(base.UserlandLinkName, false))
 
-	for _, filer := range []base.CBORFiler{
-		t.metadata,
-		t.skeleton,
-	} {
-		file, err := filer.CBORFile()
-		if err != nil {
-			return nil, err
-		}
-
-		linkName, err := base.Filename(file)
-		if err != nil {
-			return nil, err
-		}
-
-		res, err := store.PutFile(file)
-		if err != nil {
-			return nil, err
-		}
-
-		links.Add(res.ToLink(linkName, true))
+	metaBuf, err := base.EncodeCBOR(t.metadata)
+	if err != nil {
+		return nil, err
 	}
+	id, err := store.PutBlock(metaBuf.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	links.Add(mdstore.Link{
+		Name: base.MetadataLinkName,
+		Cid:  id,
+		Size: int64(metaBuf.Len()),
+	})
 
-	result, err := t.writeHeader(links)
+	skf, err := t.skeleton.CBORFile()
+	if err != nil {
+		return nil, err
+	}
+	res, err := store.PutFile(skf)
+	if err != nil {
+		return nil, err
+	}
+	links.Add(res.ToLink(base.SkeletonLinkName, true))
+
+	result, err := t.writeHeader(ctx, links)
 	if err != nil {
 		return nil, err
 	}
@@ -363,12 +368,12 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 	return result, nil
 }
 
-func (t *PublicTree) writeHeader(links mdstore.Links) (base.PutResult, error) {
+func (t *PublicTree) writeHeader(ctx context.Context, links mdstore.Links) (base.PutResult, error) {
 	store := t.fs.DagStore()
 
 	if !t.cid.Equals(cid.Cid{}) {
 		// TODO(b5): incorrect
-		n, err := store.GetNode(t.cid)
+		n, err := store.GetNode(ctx, t.cid)
 		if err != nil {
 			return nil, err
 		}
@@ -504,7 +509,8 @@ func NewEmptyFile(fs base.MerkleDagFS, name string, content io.ReadCloser) *Publ
 
 func LoadFileFromCID(fs base.MerkleDagFS, id cid.Cid, name string) (*PublicFile, error) {
 	store := fs.DagStore()
-	header, err := store.GetNode(id)
+	ctx := fs.Context()
+	header, err := store.GetNode(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading file header: %w", err)
 	}
@@ -515,7 +521,7 @@ func LoadFileFromCID(fs base.MerkleDagFS, id cid.Cid, name string) (*PublicFile,
 	if mdLink == nil {
 		return nil, errors.New("header is missing 'metadata' link")
 	}
-	md, err := base.LoadMetadata(store, mdLink.Cid)
+	md, err := base.LoadMetadata(ctx, store, mdLink.Cid)
 	if err != nil {
 		return nil, err
 	}
@@ -548,8 +554,9 @@ func (f *PublicFile) Size() int64          { return f.size }
 func (f *PublicFile) Links() mdstore.Links { return mdstore.NewLinks() }
 
 func (f *PublicFile) Read(p []byte) (n int, err error) {
+	ctx := f.fs.Context()
 	if f.content == nil {
-		f.content, err = f.fs.DagStore().GetFile(f.userland)
+		f.content, err = f.fs.DagStore().GetFile(ctx, f.userland)
 		if err != nil {
 			return 0, err
 		}

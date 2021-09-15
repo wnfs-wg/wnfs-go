@@ -1,10 +1,10 @@
 default: build
 
 build:
-	go build -o wnfs ./cmd
+	cd ./cmd && go build -o wnfs .
 
 install:
-	go build -o wnfs ./cmd
+	cd ./cmd && go build -o wnfs .
 	cp wnfs /usr/local/bin/wnfs
 
 test:
@@ -14,6 +14,6 @@ coverage:
 	go tool cover --html=coverage.txt
 
 bench:
-	cd ipfs && go test -bench=. -run XXX -benchmem && echo ""
+	cd cmd/ipfs && go test -bench=. -run XXX -benchmem && echo ""
 	go test -bench=BenchmarkPublic -run XXX -benchmem && echo ""
 	go test -bench=BenchmarkPrivate -run XXX -benchmem

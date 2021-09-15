@@ -11,9 +11,15 @@ import (
 	"github.com/ipfs/go-cid"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
-	wnipfs "github.com/qri-io/wnfs-go/ipfs"
+	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
 	cli "github.com/urfave/cli/v2"
 )
+
+func init() {
+	if lvl := os.Getenv("WNFS_LOGGING"); lvl != "" {
+		golog.SetLogLevel("wnfs", lvl)
+	}
+}
 
 func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
 	ipfsPath := os.Getenv("IPFS_PATH")

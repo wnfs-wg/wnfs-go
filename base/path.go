@@ -5,6 +5,7 @@ import "strings"
 type Path []string
 
 func NewPath(posix string) (Path, error) {
+	posix = strings.TrimPrefix(posix, "/")
 	return strings.Split(posix, "/"), nil
 }
 
