@@ -51,7 +51,7 @@ func MakeAPISwarm(ctx context.Context, fullIdentity bool, n int) ([]*core.IpfsNo
 				return nil, nil, err
 			}
 
-			kbytes, err := sk.Bytes()
+			kbytes, err := sk.Raw()
 			if err != nil {
 				return nil, nil, err
 			}
