@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	fuzz "github.com/google/gofuzz"
 )
 
 func TestRatchet(t *testing.T) {
@@ -23,7 +24,7 @@ func TestRatchet(t *testing.T) {
 
 	// prove a single advance is sane
 	a.Inc()
-	b := newSpiralRatchetFromSeed(seed)
+	b := zero(seed)
 	b.Inc()
 	assertRatchetsEqual(t, &a, &b)
 
@@ -37,43 +38,51 @@ func TestRatchet(t *testing.T) {
 func TestRatchetAdd256(t *testing.T) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	// manually advance ratchet 256 (2 ^ 8) times
-	slow := newSpiralRatchetFromSeed(seed)
+	slow := zero(seed)
 	for i := 0; i < 256; i++ {
 		slow.Inc()
 	}
 
 	// fast jump 256 values in one shot
-	fast := newSpiralRatchetFromSeed(seed)
+	fast := zero(seed)
 	fast, _ = nextMediumEpoch(fast)
 
 	assertRatchetsEqual(t, &slow, &fast)
 }
 
-func TestRatchetAdd1000(t *testing.T) {
-	n := 1000
-	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
-	// manually advance ratchet
-	slow := newSpiralRatchetFromSeed(seed)
-	for i := 0; i < n; i++ {
-		slow.Inc()
+func TestFuzzRatchet(t *testing.T) {
+	// TODO(b5): flip this to a native fuzz test if/when native fuzzing lands
+	// https://golang.org/s/draft-fuzzing-design
+	f := fuzz.New()
+	var n uint16 // test is relatively expensive, keeping the upper-bound limited keeps tests fast
+
+	for count := 0; count < 50; count++ {
+		f.Fuzz(&n) // get a random number to increment
+		if n == 0 {
+			continue // this test cannot test inc by zero
+		}
+		t.Logf("testing %d increments", n)
+		slow := NewSpiralRatchet()
+		fast := slow.Copy()
+
+		for i := 0; i < int(n); i++ {
+			slow.Inc()
+		}
+
+		fast.IncBy(int(n))
+		assertRatchetsEqual(t, slow, fast)
 	}
-
-	fast := newSpiralRatchetFromSeed(seed)
-	fast.IncBy(n)
-
-	assertRatchetsEqual(t, &slow, &fast)
 }
-
 func TestRatchetAdd65536(t *testing.T) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	// manually advance ratchet 2 ^ 16 times (65,536)
-	slow := newSpiralRatchetFromSeed(seed)
+	slow := zero(seed)
 	for i := 0; i < 65536; i++ {
 		slow.Inc()
 	}
 
 	// fast jump 2 ^ 16 values in one shot
-	fast := newSpiralRatchetFromSeed(seed)
+	fast := zero(seed)
 	fast, _ = nextLargeEpoch(fast)
 
 	assertRatchetsEqual(t, &slow, &fast)
@@ -81,7 +90,7 @@ func TestRatchetAdd65536(t *testing.T) {
 
 func TestRatchetCoding(t *testing.T) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
-	a := newSpiralRatchetFromSeed(seed)
+	a := zero(seed)
 	encoded := a.Encode()
 
 	b, err := DecodeRatchet(encoded)
@@ -158,7 +167,7 @@ func hexMap(r *SpiralRatchet) map[string]string {
 func BenchmarkRatchetAdd256(b *testing.B) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	for i := 0; i < b.N; i++ {
-		r := newSpiralRatchetFromSeed(seed)
+		r := zero(seed)
 		for i := 0; i < 255; i++ {
 			r.Inc()
 		}
@@ -168,7 +177,7 @@ func BenchmarkRatchetAdd256(b *testing.B) {
 func BenchmarkRatchetDeserializeAdd1(b *testing.B) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
 	var r *SpiralRatchet
-	*r = newSpiralRatchetFromSeed(seed)
+	*r = zero(seed)
 	// advance ratchet a bunch
 	for i := 0; i < 125; i++ {
 		r.Inc()

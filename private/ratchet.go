@@ -28,7 +28,7 @@ func NewSpiralRatchet() *SpiralRatchet {
 		panic(err)
 	}
 	seed := [32]byte{}
-	for i, d := range seedData {
+	for i, d := range seedData[:32] {
 		seed[i] = d
 	}
 	incMed, incSmall := seedData[32], seedData[33]
@@ -56,6 +56,16 @@ func (r *SpiralRatchet) Key() Key {
 	// xor is associative, so order shouldn't matter
 	v := xor(r.large, xor(r.medium, r.small))
 	return hash(v[:])
+}
+
+func (r *SpiralRatchet) Copy() *SpiralRatchet {
+	return &SpiralRatchet{
+		large:         r.large,
+		medium:        r.medium,
+		mediumCounter: r.mediumCounter,
+		small:         r.small,
+		smallCounter:  r.smallCounter,
+	}
 }
 
 func DecodeRatchet(s string) (*SpiralRatchet, error) {
@@ -121,7 +131,7 @@ func (r SpiralRatchet) combinedCounter() int {
 
 func incBy(r SpiralRatchet, n int) (jumped SpiralRatchet, jumpCount int) {
 	if n <= 0 {
-		return
+		return r, 0
 	} else if n >= 256*256-r.combinedCounter() {
 		// n is larger than at least one large epoch jump
 		jumped, jumpCount := nextLargeEpoch(r)

@@ -10,6 +10,7 @@ require (
 	github.com/filecoin-project/go-hamt-ipld/v3 v3.1.0
 	github.com/fxamacker/cbor/v2 v2.3.0
 	github.com/google/go-cmp v0.5.5
+	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/uuid v1.2.0 // indirect
 	github.com/gopherjs/gopherjs v0.0.0-20190812055157-5d271430af9f // indirect
 	github.com/ipfs/go-bitswap v0.3.4 // indirect
