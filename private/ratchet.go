@@ -15,15 +15,15 @@ import (
 const ratchetSignifier = "uF"
 
 type SpiralRatchet struct {
-	large        [32]byte
-	medium       [32]byte // bounded to 256 elements
-	mediumCursor byte     // used as a uint8
-	small        [32]byte // bounded to 256 elements
-	smallCursor  byte     // used as a uint8
+	large         [32]byte
+	medium        [32]byte // bounded to 256 elements
+	mediumCounter uint8
+	small         [32]byte // bounded to 256 elements
+	smallCounter  uint8
 }
 
 func NewSpiralRatchet() *SpiralRatchet {
-	seedData := make([]byte, 32)
+	seedData := make([]byte, 34) // 32 bytes for the seed, plus 2 extra bytes to randomize small & medium starts
 	if _, err := rand.Read(seedData); err != nil {
 		panic(err)
 	}
@@ -31,20 +31,31 @@ func NewSpiralRatchet() *SpiralRatchet {
 	for i, d := range seedData {
 		seed[i] = d
 	}
-	return NewSpiralRatchetFromSeed(seed)
-}
-
-func NewSpiralRatchetFromSeed(seed [32]byte) *SpiralRatchet {
-	medium := hash(compliement(seed))
-	small := hash(compliement(medium))
-
-	// TODO (use crypto.Random to scramble small & medium)
+	incMed, incSmall := seedData[32], seedData[33]
+	medSeed := hash32(compliement(seed))
+	smallSeed := hash32(compliement(medSeed))
 
 	return &SpiralRatchet{
-		large:  hash(seed[:]),
-		medium: hash(medium[:]),
-		small:  hash(small[:]),
+		large:  hash32(seed),
+		medium: hash32N(medSeed, incMed),
+		small:  hash32N(smallSeed, incSmall),
 	}
+}
+
+func zero(seed [32]byte) SpiralRatchet {
+	med := hash32(compliement(seed))
+	small := hash32(compliement(med))
+	return SpiralRatchet{
+		large:  hash32(seed),
+		medium: med,
+		small:  small,
+	}
+}
+
+func (r *SpiralRatchet) Key() Key {
+	// xor is associative, so order shouldn't matter
+	v := xor(r.large, xor(r.medium, r.small))
+	return hash(v[:])
 }
 
 func DecodeRatchet(s string) (*SpiralRatchet, error) {
@@ -66,11 +77,11 @@ func DecodeRatchet(s string) (*SpiralRatchet, error) {
 		case i < 32:
 			r.small[i] = d
 		case i == 32:
-			r.smallCursor = d
+			r.smallCounter = d
 		case i >= 33 && i < 65:
 			r.medium[i-33] = d
 		case i == 65:
-			r.mediumCursor = d
+			r.mediumCounter = d
 		case i >= 66 && i < 98:
 			r.large[i-66] = d
 		}
@@ -82,57 +93,85 @@ func DecodeRatchet(s string) (*SpiralRatchet, error) {
 func (r *SpiralRatchet) Encode() string {
 	b := &bytes.Buffer{}
 	b.Write(r.small[:])
-	b.WriteByte(r.smallCursor)
+	b.WriteByte(r.smallCounter)
 	b.Write(r.medium[:])
-	b.WriteByte(r.mediumCursor)
+	b.WriteByte(r.mediumCounter)
 	b.Write(r.large[:])
 	return ratchetSignifier + base64.RawURLEncoding.EncodeToString(b.Bytes())
 }
 
-func (r *SpiralRatchet) Key() Key {
-	// xor is associative, so order shouldn't matter
-	v := xor(xor(r.large, r.medium), r.small)
-	return hash(v[:])
-}
-
-func (r *SpiralRatchet) Add1() {
-	if r.smallCursor >= 255 {
-		r.Add256()
+func (r *SpiralRatchet) Inc() {
+	if r.smallCounter >= 255 {
+		*r, _ = nextMediumEpoch(*r)
 		return
 	}
-	r.small = hash(r.small[:])
-	r.smallCursor++
+
+	r.small = hash32(r.small)
+	r.smallCounter += 1
 }
 
-func (r *SpiralRatchet) Add256() {
-	if r.mediumCursor >= 255 {
-		r.Add65536()
+func (r *SpiralRatchet) IncBy(n int) {
+	jumped, _ := incBy(*r, n)
+	*r = jumped
+}
+
+func (r SpiralRatchet) combinedCounter() int {
+	return 256*int(r.mediumCounter) + int(r.smallCounter)
+}
+
+func incBy(r SpiralRatchet, n int) (jumped SpiralRatchet, jumpCount int) {
+	if n <= 0 {
 		return
+	} else if n >= 256*256-r.combinedCounter() {
+		// n is larger than at least one large epoch jump
+		jumped, jumpCount := nextLargeEpoch(r)
+		return incBy(jumped, n-jumpCount)
+	} else if n >= 256-int(r.smallCounter) {
+		// n is larger than at least one medium epoch jump
+		jumped, jumpCount := nextMediumEpoch(r)
+		return incBy(jumped, n-jumpCount)
 	}
-	r.rolloverSmall()
-	r.medium = hash(r.medium[:])
-	r.mediumCursor++
+
+	// increment by small. checks above ensure n < 256
+	r.small = hash32N(r.small, uint8(n))
+	r.smallCounter += uint8(n)
+	return r, n
 }
 
-func (r *SpiralRatchet) Add65536() {
-	r.rolloverMedium()
-	r.large = hash(r.large[:])
+func nextLargeEpoch(r SpiralRatchet) (jumped SpiralRatchet, jumpCount int) {
+	jumped = zero(r.large)
+	jumpCount = 256*256 - r.combinedCounter()
+	return jumped, jumpCount
 }
 
-func (r *SpiralRatchet) rolloverMedium() {
-	// TODO(b5): FIXME! this is incorrect. need to work through large field incrementing
-	r.medium = hash(compliement(r.large))
-	r.mediumCursor = 0
-	r.rolloverSmall()
-}
+func nextMediumEpoch(r SpiralRatchet) (jumped SpiralRatchet, jumpCount int) {
+	if r.mediumCounter >= 255 {
+		return nextLargeEpoch(r)
+	}
 
-func (r *SpiralRatchet) rolloverSmall() {
-	r.small = hash(compliement(r.medium))
-	r.smallCursor = 0
+	jumped = SpiralRatchet{
+		large:         r.large,
+		medium:        hash32(r.medium),
+		mediumCounter: r.mediumCounter + 1,
+		small:         hash32(compliement(r.medium)),
+	}
+	jumpCount = jumped.combinedCounter() - r.combinedCounter()
+	return jumped, jumpCount
 }
 
 func hash(d []byte) [32]byte {
 	return sha3.Sum256(d)
+}
+
+func hash32(d [32]byte) [32]byte {
+	return hash(d[:])
+}
+
+func hash32N(d [32]byte, n uint8) [32]byte {
+	for i := uint8(0); i < n; i++ {
+		d = hash32(d)
+	}
+	return d
 }
 
 func xor(a, b [32]byte) [32]byte {
@@ -143,8 +182,8 @@ func xor(a, b [32]byte) [32]byte {
 	return res
 }
 
-func compliement(d [32]byte) []byte {
-	res := make([]byte, 32)
+func compliement(d [32]byte) [32]byte {
+	res := [32]byte{}
 	for i, b := range d {
 		res[i] = ^b
 	}
