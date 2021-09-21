@@ -1,25 +1,10 @@
 package private
 
 import (
-	"bytes"
 	"testing"
 
-	bloom "github.com/bits-and-blooms/bloom/v3"
+	"github.com/qri-io/wnfs-go/bloom"
 )
-
-func TestNameFilterParams(t *testing.T) {
-	f := bloom.New(47, 30)
-	f.Add(bytes.Repeat([]byte{0}, 32))
-	buf := &bytes.Buffer{}
-	f.WriteTo(buf)
-	if len(buf.Bytes()) != 32 {
-		t.Errorf("expect bloom filter to be 32 bytes in length. got: %d", len(buf.Bytes()))
-	}
-	base := ToBase64(f)
-	if len(base) != 32 {
-		t.Errorf("expect base64 URL filter to be 32 bytes in length. got: %d\n%s", len(base), base)
-	}
-}
 
 func TestNamefilter(t *testing.T) {
 	var (
@@ -32,13 +17,6 @@ func TestNamefilter(t *testing.T) {
 		inumber = NewINumber()
 	)
 
-	// fil := bloom.New(filterSize, hashCount)
-	// fil.Add([]byte(rootKey))
-	// root := BareNamefilter(ToBase64(fil))
-	// // root, err := CreateBare(rootKey)
-	// // if err != nil {
-	// // 	t.Fatal(err)
-	// // }
 	identity := IdentityBareNamefilter()
 	root, err := NewBareNamefilter(identity, inumber)
 	if err != nil {
@@ -50,12 +28,12 @@ func TestNamefilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f, err := FromBase64(string(knf))
+	f, err := bloom.DecodeBase64(string(knf))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !f.Test(childKey[:]) {
+	if !f.Has(childKey[:]) {
 		t.Errorf("expected childKey to be present in namefilter")
 	}
 

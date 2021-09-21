@@ -18,3 +18,26 @@ func TestBasic(t *testing.T) {
 		t.Error("similar string should not be in set")
 	}
 }
+
+func TestBase64Coding(t *testing.T) {
+	f := &Filter{}
+	f.Add([]byte("element"))
+	s := f.EncodeBase64()
+	got, err := DecodeBase64(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.Equals(*got) {
+		t.Errorf("expected serialization round trip to equal original filter")
+	}
+}
+
+func BenchmarkSaturation(b *testing.B) {
+	var f *Filter
+	empty := &Filter{}
+
+	for i := 0; i < b.N; i++ {
+		f = empty
+		f.Saturate()
+	}
+}
