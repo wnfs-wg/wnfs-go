@@ -16,8 +16,6 @@ require (
 	github.com/alexbrainman/goissue34681 v0.0.0-20191006012335-3fc7a47baff5 // indirect
 	github.com/benbjohnson/clock v1.1.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bits-and-blooms/bitset v1.2.0 // indirect
-	github.com/bits-and-blooms/bloom/v3 v3.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/btcsuite/btcd v0.22.0-beta // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
@@ -59,18 +57,16 @@ require (
 	github.com/ipfs/go-block-format v0.0.3 // indirect
 	github.com/ipfs/go-blockservice v0.1.7
 	github.com/ipfs/go-cid v0.0.7
-	github.com/ipfs/go-cidutil v0.0.2 // indirect
+	github.com/ipfs/go-cidutil v0.0.2
 	github.com/ipfs/go-datastore v0.4.6
 	github.com/ipfs/go-ds-badger v0.2.7 // indirect
 	github.com/ipfs/go-ds-flatfs v0.4.5 // indirect
 	github.com/ipfs/go-ds-leveldb v0.4.2 // indirect
 	github.com/ipfs/go-ds-measure v0.1.0 // indirect
 	github.com/ipfs/go-fetcher v1.5.0 // indirect
-	github.com/ipfs/go-filestore v1.0.0
 	github.com/ipfs/go-fs-lock v0.0.7 // indirect
 	github.com/ipfs/go-graphsync v0.8.0 // indirect
 	github.com/ipfs/go-ipfs v0.10.0-rc1
-	github.com/ipfs/go-ipfs-blockstore v1.0.5-0.20210802214209-c56038684c45
 	github.com/ipfs/go-ipfs-chunker v0.0.5 // indirect
 	github.com/ipfs/go-ipfs-cmds v0.6.0 // indirect
 	github.com/ipfs/go-ipfs-config v0.16.0
@@ -247,8 +243,11 @@ require (
 	github.com/cenkalti/backoff/v4 v4.1.1 // indirect
 	github.com/go-kit/log v0.1.0 // indirect
 	github.com/go-logfmt/logfmt v0.5.0 // indirect
+	github.com/ipfs/go-filestore v1.0.0 // indirect
+	github.com/ipfs/go-ipfs-blockstore v1.0.5-0.20210802214209-c56038684c45 // indirect
 	github.com/ipfs/go-unixfsnode v1.1.2 // indirect
 	github.com/libp2p/zeroconf/v2 v2.0.0 // indirect
+	github.com/pierrec/xxHash v0.1.5 // indirect
 	go.opentelemetry.io/otel v0.20.0 // indirect
 	go.opentelemetry.io/otel/metric v0.20.0 // indirect
 	go.opentelemetry.io/otel/trace v0.20.0 // indirect
