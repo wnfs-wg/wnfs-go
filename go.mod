@@ -36,6 +36,7 @@ require (
 	github.com/libp2p/go-libp2p-record v0.1.3 // indirect
 	github.com/multiformats/go-multiaddr v0.3.2 // indirect
 	github.com/multiformats/go-multihash v0.0.15
+	github.com/pierrec/xxHash v0.1.5 // indirect
 	github.com/polydawn/refmt v0.0.0-20201211092308-30ac6d18308e // indirect
 	github.com/smartystreets/assertions v1.0.1 // indirect
 	github.com/smartystreets/goconvey v1.6.4 // indirect
