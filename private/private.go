@@ -554,7 +554,7 @@ func (pt *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult,
 func (pt *Tree) Put() (base.PutResult, error) {
 	log.Debugw("Tree.Put", "name", pt.name)
 
-	pt.ratchet.Add1()
+	pt.ratchet.Inc()
 	key := pt.ratchet.Key()
 	pt.info.Ratchet = pt.ratchet.Encode()
 	pt.info.Size = pt.info.Links.SizeSum()
@@ -724,7 +724,7 @@ func (pf *File) Put() (PutResult, error) {
 	// generate a new version key by advancing the ratchet
 	// TODO(b5): what happens if anything errors after advancing the ratchet?
 	// assuming we need to make a point of throwing away the file & cleaning the MMPT
-	pf.ratchet.Add1()
+	pf.ratchet.Inc()
 	key := pf.ratchet.Key()
 
 	res, err := store.PutEncryptedFile(base.NewMemfileReader(pf.name, pf.content), key[:])
