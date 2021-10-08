@@ -9,6 +9,10 @@ import (
 	"github.com/qri-io/wnfs-go/mdstore"
 )
 
+type SkeletonSource interface {
+	Skeleton() (Skeleton, error)
+}
+
 type SkeletonInfo struct {
 	Cid         cid.Cid  `json:"cid,omitempty"`
 	Userland    cid.Cid  `json:"userland,omitempty"`

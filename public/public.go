@@ -31,10 +31,11 @@ type PublicTree struct {
 }
 
 var (
-	_ mdstore.DagNode = (*PublicTree)(nil)
-	_ base.Tree       = (*PublicTree)(nil)
-	_ fs.File         = (*PublicTree)(nil)
-	_ fs.ReadDirFile  = (*PublicTree)(nil)
+	_ mdstore.DagNode     = (*PublicTree)(nil)
+	_ base.Tree           = (*PublicTree)(nil)
+	_ base.SkeletonSource = (*PublicTree)(nil)
+	_ fs.File             = (*PublicTree)(nil)
+	_ fs.ReadDirFile      = (*PublicTree)(nil)
 )
 
 func NewEmptyTree(fs base.MerkleDagFS, name string) *PublicTree {
@@ -151,12 +152,9 @@ func (t *PublicTree) ReadDir(n int) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
-// func (t *PublicTree) Header() base.TreeHeader {
-// 	// TODO(b5): finish
-// 	return &treeInfo{
-// 		metadata: *t.metadata,
-// 	}
-// }
+func (t *PublicTree) Skeleton() (base.Skeleton, error) {
+	return t.skeleton, nil
+}
 
 func (t *PublicTree) Get(path base.Path) (fs.File, error) {
 	head, tail := path.Shift()
@@ -608,9 +606,10 @@ func (f *PublicFile) Put() (base.PutResult, error) {
 		Name:   base.MetadataLinkName,
 		Cid:    metadataCid,
 		Size:   int64(buf.Len()),
-		IsFile: false, // TODO (b5): not sure?
+		IsFile: true,
 	})
 
+	// add previous reference
 	if !f.cid.Equals(cid.Cid{}) {
 		links.Add(mdstore.Link{
 			Name: base.PreviousLinkName,

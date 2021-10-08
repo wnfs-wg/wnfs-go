@@ -4,6 +4,14 @@ import "strings"
 
 type Path []string
 
+func MustPath(posix string) Path {
+	p, err := NewPath(posix)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
 func NewPath(posix string) (Path, error) {
 	posix = strings.TrimPrefix(posix, "/")
 	return strings.Split(posix, "/"), nil
