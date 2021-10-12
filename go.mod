@@ -35,6 +35,7 @@ require (
 	github.com/polydawn/refmt v0.0.0-20201211092308-30ac6d18308e // indirect
 	github.com/smartystreets/assertions v1.0.1 // indirect
 	github.com/smartystreets/goconvey v1.6.4 // indirect
+	github.com/stretchr/testify v1.7.0
 	github.com/warpfork/go-wish v0.0.0-20200122115046-b9ea61034e4a // indirect
 	github.com/whyrusleeping/cbor-gen v0.0.0-20210713220151-be142a5ae1a8
 	golang.org/x/crypto v0.0.0-20210506145944-38f3c27a63bf

@@ -14,6 +14,7 @@ const (
 	SkeletonLinkName = "skeleton"
 	PrettyLinkName   = "p"
 	PreviousLinkName = "previous"
+	MergeLinkName    = "merge"
 	UserlandLinkName = "userland"
 )
 
@@ -35,7 +36,12 @@ type PrivateMerkleDagFS interface {
 
 type Node interface {
 	fs.File
+	Cid() cid.Cid
 	AsHistoryEntry() HistoryEntry
+	AsLink() mdstore.Link
+
+	// Merge a remote node, assumed node is aligned between local & remote tree
+	Merge(remote Node) (MergeResult, error)
 }
 
 type File interface {
