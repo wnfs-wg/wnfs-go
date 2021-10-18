@@ -88,7 +88,7 @@ func (mds *merkleDagStore) PutNode(links Links) (PutResult, error) {
 	})
 	for name, lnk := range links.Map() {
 		if !lnk.Cid.Defined() {
-			return PutResult{}, fmt.Errorf("cannot write write link %q: empty CID", name)
+			return PutResult{}, fmt.Errorf("cannot write link %q: empty CID", name)
 		}
 		node.AddRawLink(name, lnk.IPLD())
 	}

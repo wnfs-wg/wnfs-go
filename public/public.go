@@ -27,6 +27,7 @@ type PublicTree struct {
 	metadata *base.Metadata
 	skeleton base.Skeleton
 	previous *cid.Cid
+	merge    *cid.Cid      // if this is a merge commit, will be populated
 	userland mdstore.Links // links to files are stored in "userland" header key
 }
 
@@ -88,6 +89,10 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 	if prev := links.Get(base.PreviousLinkName); prev != nil {
 		previous = &prev.Cid
 	}
+	var merge *cid.Cid
+	if m := links.Get(base.MergeLinkName); m != nil {
+		merge = &m.Cid
+	}
 
 	userlandLnk := links.Get(base.UserlandLinkName)
 	if userlandLnk == nil {
@@ -107,6 +112,7 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 		metadata: md,
 		skeleton: sk,
 		previous: previous,
+		merge:    merge,
 		userland: userland.Links(),
 	}, nil
 }
@@ -116,6 +122,15 @@ func (t *PublicTree) Cid() cid.Cid         { return t.cid }
 func (t *PublicTree) Size() int64          { return t.size }
 func (t *PublicTree) Links() mdstore.Links { return t.userland }
 func (t *PublicTree) Raw() []byte          { return nil }
+func (t *PublicTree) AsLink() mdstore.Link {
+	return mdstore.Link{
+		Name:   t.name,
+		Cid:    t.cid,
+		Size:   t.size,
+		IsFile: false,
+		Mtime:  t.metadata.UnixMeta.Mtime,
+	}
+}
 
 func (t *PublicTree) Stat() (fs.FileInfo, error) {
 	return base.NewFSFileInfo(
@@ -178,7 +193,7 @@ func (t *PublicTree) Get(path base.Path) (fs.File, error) {
 	}
 
 	if t.skeleton[head].IsFile {
-		return LoadFileFromCID(t.fs, link.Cid, link.Name)
+		return LoadFileFromCID(t.fs, link.Name, link.Cid)
 	}
 
 	return LoadTreeFromCID(t.fs, link.Name, link.Cid)
@@ -361,25 +376,32 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
+	if t.cid.Defined() {
+		// need to copy CID, as we're about to alter it's value
+		id, _ := cid.Parse(t.cid)
+		t.previous = &id
+	}
 	t.cid = result.CID()
-	log.Debugw("wrote public tree", "name", t.name, "cid", t.cid.String(), "userlandLinkCount", t.userland.Len(), "size", t.size)
+	log.Debugw("wrote public tree", "name", t.name, "cid", t.cid.String(), "userlandLinkCount", t.userland.Len(), "size", t.size, "prev", t.previous)
 	return result, nil
 }
 
 func (t *PublicTree) writeHeader(ctx context.Context, links mdstore.Links) (base.PutResult, error) {
 	store := t.fs.DagStore()
 
-	if !t.cid.Equals(cid.Cid{}) {
-		// TODO(b5): incorrect
-		n, err := store.GetNode(ctx, t.cid)
-		if err != nil {
-			return nil, err
-		}
-
+	if t.cid.Defined() {
 		links.Add(mdstore.Link{
 			Name: base.PreviousLinkName,
 			Cid:  t.cid,
-			Size: n.Size(),
+			Size: t.Size(),
+		})
+	}
+
+	if t.merge != nil && t.merge.Defined() {
+		links.Add(mdstore.Link{
+			Name: base.MergeLinkName,
+			Cid:  *t.merge,
+			// TODO(b5): size field
 		})
 	}
 
@@ -394,6 +416,92 @@ func (t *PublicTree) writeHeader(ctx context.Context, links mdstore.Links) (base
 		Metadata: links.Get(base.MetadataLinkName).Cid,
 		Userland: links.Get(base.UserlandLinkName).Cid,
 		Skeleton: t.skeleton,
+	}, nil
+}
+
+func (t *PublicTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
+	switch x := n.(type) {
+	case *PublicTree:
+		log.Debugw("merge trees", "local", t.cid, "remote", x.cid)
+		return t.mergeDivergedTree(x)
+	case *PublicFile:
+		result.Type = base.MTMergeCommit
+		nHist := n.AsHistoryEntry()
+		t.merge = &nHist.Cid
+		t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+		update, err := t.Put()
+		if err != nil {
+			return result, err
+		}
+
+		si := update.ToSkeletonInfo()
+		return base.MergeResult{
+			Type:     base.MTMergeCommit,
+			Cid:      si.Cid,
+			Userland: si.Cid,
+			Metadata: si.Metadata,
+			Size:     update.ToLink("").Size,
+			IsFile:   true,
+		}, nil
+	default:
+		return result, fmt.Errorf("cannot merge node of type %T onto public directory", n)
+	}
+}
+
+func (t *PublicTree) mergeDivergedTree(remote *PublicTree) (res base.MergeResult, err error) {
+	for remName, remInfo := range remote.skeleton {
+		localInfo, existsLocally := t.skeleton[remName]
+
+		if !existsLocally {
+			// remote has a file local is missing, add it.
+			n, err := loadNodeFromSkeletonInfo(remote.fs, remName, remInfo)
+			if err != nil {
+				return res, err
+			}
+
+			t.skeleton[remName] = remInfo
+			t.userland.Add(n.AsLink())
+			continue
+		}
+
+		if localInfo.Cid.Equals(remInfo.Cid) {
+			// both files are equal. no need to merge
+			continue
+		}
+
+		// node exists in both trees & CIDs are inequal. merge recursively
+		lcl, err := loadNodeFromSkeletonInfo(t.fs, remName, localInfo)
+		if err != nil {
+			return res, err
+		}
+		rem, err := loadNodeFromSkeletonInfo(remote.fs, remName, remInfo)
+		if err != nil {
+			return res, err
+		}
+
+		res, err := Merge(lcl, rem)
+		if err != nil {
+			return res, err
+		}
+		t.skeleton[remName] = res.ToSkeletonInfo()
+		t.userland.Add(res.ToLink(remName))
+	}
+
+	t.merge = &remote.cid
+	t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	update, err := t.Put()
+	if err != nil {
+		return res, err
+	}
+
+	si := update.ToSkeletonInfo()
+	return base.MergeResult{
+		Type:     base.MTMergeCommit,
+		Cid:      si.Cid,
+		Userland: si.Cid,
+		Metadata: si.Metadata,
+		Size:     update.ToLink("").Size,
+		IsFile:   false,
 	}, nil
 }
 
@@ -448,7 +556,7 @@ func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.
 
 func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
 	if link := t.userland.Get(name); link != nil {
-		previousFile, err := LoadFileFromCID(t.fs, link.Cid, name)
+		previousFile, err := LoadFileFromCID(t.fs, name, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -465,12 +573,14 @@ func (t *PublicTree) updateUserlandLink(name string, res base.PutResult) {
 	t.userland.Add(res.ToLink(name))
 	t.skeleton[name] = res.ToSkeletonInfo()
 	t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	t.merge = nil // clear merge field in the case where we're mutating after a merge commit
 }
 
 func (t *PublicTree) removeUserlandLink(name string) {
 	t.userland.Remove(name)
 	delete(t.skeleton, name)
 	t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	t.merge = nil // clear merge field in the case where we're mutating after a merge commit
 }
 
 type PublicFile struct {
@@ -481,6 +591,7 @@ type PublicFile struct {
 
 	metadata *base.Metadata
 	previous *cid.Cid
+	merge    *cid.Cid
 	userland cid.Cid
 
 	content io.ReadCloser
@@ -489,6 +600,7 @@ type PublicFile struct {
 var (
 	_ mdstore.DagNode = (*PublicFile)(nil)
 	_ fs.File         = (*PublicFile)(nil)
+	_ base.Node       = (*PublicFile)(nil)
 )
 
 func NewEmptyFile(fs base.MerkleDagFS, name string, content io.ReadCloser) *PublicFile {
@@ -505,7 +617,7 @@ func NewEmptyFile(fs base.MerkleDagFS, name string, content io.ReadCloser) *Publ
 	}
 }
 
-func LoadFileFromCID(fs base.MerkleDagFS, id cid.Cid, name string) (*PublicFile, error) {
+func LoadFileFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicFile, error) {
 	store := fs.DagStore()
 	ctx := fs.Context()
 	header, err := store.GetNode(ctx, id)
@@ -534,6 +646,11 @@ func LoadFileFromCID(fs base.MerkleDagFS, id cid.Cid, name string) (*PublicFile,
 		previous = &prev.Cid
 	}
 
+	var merge *cid.Cid
+	if m := links.Get(base.MergeLinkName); m != nil {
+		merge = &m.Cid
+	}
+
 	return &PublicFile{
 		fs:   fs,
 		cid:  id,
@@ -542,6 +659,7 @@ func LoadFileFromCID(fs base.MerkleDagFS, id cid.Cid, name string) (*PublicFile,
 
 		metadata: md,
 		previous: previous,
+		merge:    merge,
 		userland: userlandLink.Cid,
 	}, nil
 }
@@ -550,17 +668,27 @@ func (f *PublicFile) Name() string         { return f.name }
 func (f *PublicFile) Cid() cid.Cid         { return f.cid }
 func (f *PublicFile) Size() int64          { return f.size }
 func (f *PublicFile) Links() mdstore.Links { return mdstore.NewLinks() }
+func (f *PublicFile) AsLink() mdstore.Link {
+	return mdstore.Link{
+		Name:   f.name,
+		Cid:    f.cid,
+		Size:   f.size,
+		IsFile: true,
+		Mtime:  f.metadata.UnixMeta.Mtime,
+	}
+}
 
 func (f *PublicFile) Read(p []byte) (n int, err error) {
-	ctx := f.fs.Context()
-	if f.content == nil {
-		f.content, err = f.fs.DagStore().GetFile(ctx, f.userland)
-		if err != nil {
-			return 0, err
-		}
-	}
-
+	f.ensureContent()
 	return f.content.Read(p)
+}
+
+func (f *PublicFile) ensureContent() (err error) {
+	if f.content == nil {
+		ctx := f.fs.Context()
+		f.content, err = f.fs.DagStore().GetFile(ctx, f.userland)
+	}
+	return err
 }
 
 func (f *PublicFile) Close() error {
@@ -610,10 +738,17 @@ func (f *PublicFile) Put() (base.PutResult, error) {
 	})
 
 	// add previous reference
-	if !f.cid.Equals(cid.Cid{}) {
+	if f.cid.Defined() {
 		links.Add(mdstore.Link{
 			Name: base.PreviousLinkName,
 			Cid:  f.cid,
+		})
+	}
+
+	if f.merge != nil {
+		links.Add(mdstore.Link{
+			Name: base.MergeLinkName,
+			Cid:  *f.merge,
 		})
 	}
 
@@ -647,6 +782,31 @@ func (f *PublicFile) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
+func (f *PublicFile) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
+	result.Type = base.MTMergeCommit
+	bHist := b.AsHistoryEntry()
+	f.merge = &bHist.Cid
+	f.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	if err := f.ensureContent(); err != nil {
+		return result, err
+	}
+
+	update, err := f.Put()
+	if err != nil {
+		return result, err
+	}
+
+	si := update.ToSkeletonInfo()
+	return base.MergeResult{
+		Type:     base.MTMergeCommit,
+		Cid:      si.Cid,
+		Userland: si.Cid,
+		Metadata: si.Metadata,
+		Size:     update.ToLink("").Size,
+		IsFile:   true,
+	}, nil
+}
+
 type PutResult struct {
 	Cid      cid.Cid
 	Size     int64
@@ -677,4 +837,137 @@ func (r PutResult) ToSkeletonInfo() base.SkeletonInfo {
 		SubSkeleton: r.Skeleton,
 		IsFile:      r.IsFile,
 	}
+}
+
+func Merge(a, b base.Node) (result base.MergeResult, err error) {
+	var (
+		aCur, bCur   = a, b
+		aHist, bHist = a.AsHistoryEntry(), b.AsHistoryEntry()
+		aGen, bGen   = 0, 0
+	)
+
+	// check for equality first
+	if aHist.Cid.Equals(bHist.Cid) {
+		return base.MergeResult{
+			Type: base.MTInSync,
+			Cid:  aHist.Cid,
+			// Userland: aHist.Userland,
+			// Metadata: bHist.Metadata,
+			Size:   aHist.Size,
+			IsFile: aHist.Metadata.IsFile,
+		}, nil
+	}
+
+	afs, err := base.NodeFS(a)
+	if err != nil {
+		return result, err
+	}
+	bfs, err := base.NodeFS(b)
+	if err != nil {
+		return result, err
+	}
+
+	for {
+		bCur = b
+		bGen = 0
+		bHist = b.AsHistoryEntry()
+		for {
+			if aHist.Cid.Equals(bHist.Cid) {
+				if aGen == 0 && bGen > 0 {
+					// fast-forward
+					bHist = b.AsHistoryEntry()
+					return base.MergeResult{
+						Type: base.MTFastForward,
+						// TODO(b5):
+						// 	Userland: si.Cid,
+						// 	Metadata: si.Metadata,
+						Cid:    bHist.Cid,
+						Size:   bHist.Size,
+						IsFile: bHist.Metadata.IsFile,
+					}, nil
+				} else if aGen > 0 && bGen == 0 {
+					result.Type = base.MTLocalAhead
+					aHist := a.AsHistoryEntry()
+					return base.MergeResult{
+						Type:   base.MTLocalAhead,
+						Cid:    aHist.Cid,
+						Size:   aHist.Size,
+						IsFile: aHist.Metadata.IsFile,
+					}, nil
+				} else {
+					// both local & remote are greater than zero, have diverged
+					result.Type = base.MTMergeCommit
+					if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+						return a.MergeDiverged(b)
+					}
+					return b.MergeDiverged(a)
+				}
+			}
+
+			if bHist.Previous == nil {
+				break
+			}
+			name, err := base.Filename(bCur)
+			if err != nil {
+				return result, err
+			}
+			bCur, err = loadNode(bfs, name, *bHist.Previous)
+			if err != nil {
+				return result, err
+			}
+			bHist = bCur.AsHistoryEntry()
+			bGen++
+		}
+
+		if aHist.Previous == nil {
+			break
+		}
+		name, err := base.Filename(aCur)
+		if err != nil {
+			return result, err
+		}
+		aCur, err = loadNode(afs, name, *aHist.Previous)
+		if err != nil {
+			return result, err
+		}
+		aHist = aCur.AsHistoryEntry()
+		aGen++
+	}
+
+	// no common history, merge based on heigh & alpha-sorted-cid
+	if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+		return a.MergeDiverged(b)
+	}
+	return b.MergeDiverged(a)
+}
+
+// load a public node
+func loadNode(fs base.MerkleDagFS, name string, id cid.Cid) (n base.Node, err error) {
+	ctx := fs.Context()
+	st := fs.DagStore()
+	header, err := st.GetNode(ctx, id)
+	if err != nil {
+		return n, err
+	}
+	metaLink := header.Links().Get(base.MetadataLinkName)
+	if metaLink == nil {
+		return nil, fmt.Errorf("cid %s does not point to a well-formed public header block: missing meta link", id.String())
+	}
+
+	md, err := base.LoadMetadata(ctx, st, metaLink.Cid)
+	if err != nil {
+		return n, fmt.Errorf("error loading meta at cid %s: %w", metaLink.Cid, err)
+	}
+	if md.IsFile {
+		return LoadFileFromCID(fs, name, id)
+	}
+
+	return LoadTreeFromCID(fs, name, id)
+}
+
+func loadNodeFromSkeletonInfo(fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
+	if info.IsFile {
+		return LoadFileFromCID(fs, name, info.Cid)
+	}
+	return LoadTreeFromCID(fs, name, info.Cid)
 }

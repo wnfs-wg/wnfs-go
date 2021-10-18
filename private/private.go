@@ -288,6 +288,15 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 		// TODO(b5): finish
 	}
 }
+func (pt *Tree) AsLink() mdstore.Link {
+	return mdstore.Link{
+		Name:   pt.name,
+		Cid:    pt.cid,
+		Size:   pt.info.Size,
+		IsFile: false,
+		Mtime:  pt.info.Metadata.UnixMeta.Mtime,
+	}
+}
 
 func (pt *Tree) PrivateName() (Name, error) {
 	knf, err := AddKey(pt.info.Bnf, pt.ratchet.Key())
@@ -687,6 +696,16 @@ func (pf *File) Content() cid.Cid               { return pf.info.ContentID }
 func (pf *File) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
 		// TODO(b5): finish
+	}
+}
+
+func (pf *File) AsLink() mdstore.Link {
+	return mdstore.Link{
+		Name:   pf.name,
+		Cid:    pf.cid,
+		Size:   pf.info.Size,
+		IsFile: true,
+		Mtime:  pf.info.Metadata.UnixMeta.Mtime,
 	}
 }
 

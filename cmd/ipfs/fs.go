@@ -181,7 +181,7 @@ func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
 	})
 	for name, lnk := range links.Map() {
 		if !lnk.Cid.Defined() {
-			return mdstore.PutResult{}, fmt.Errorf("cannot write write link %q: empty CID", name)
+			return mdstore.PutResult{}, fmt.Errorf("cannot write link %q: empty CID", name)
 		}
 		node.AddRawLink(name, lnk.IPLD())
 	}
