@@ -54,33 +54,6 @@ func (mr MergeResult) ToSkeletonInfo() SkeletonInfo {
 	}
 }
 
-type RemoteSyncStatus uint8
-
-const (
-	RSSInSync      RemoteSyncStatus = iota // histories are equal
-	RSSLocalAhead                          // strictly ahead of remote
-	RSSRemoteAhead                         // remote is strictly ahead of local
-	RSSDiverged                            // histories have diverged
-)
-
-type RemoteSync struct {
-	Status              RemoteSyncStatus
-	DivergedAt          *cid.Cid
-	LocalGen, RemoteGen int
-}
-
-func (rs RemoteSync) MergeResult() MergeResult {
-	switch rs.Status {
-	case RSSInSync:
-		return MergeResult{Type: MTInSync}
-	case RSSLocalAhead:
-		return MergeResult{Type: MTLocalAhead}
-	case RSSRemoteAhead:
-		return MergeResult{Type: MTFastForward}
-	case RSSDiverged:
-		// TODO(b5): provide more context here
-		return MergeResult{Type: MTMergeCommit}
-	default:
-		return MergeResult{Type: MergeType("unknown")}
-	}
+func LessCID(a, b cid.Cid) bool {
+	return a.String() > b.String()
 }

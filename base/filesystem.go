@@ -2,6 +2,7 @@ package base
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 
 	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
@@ -36,12 +37,12 @@ type PrivateMerkleDagFS interface {
 
 type Node interface {
 	fs.File
-	Cid() cid.Cid
 	AsHistoryEntry() HistoryEntry
 	AsLink() mdstore.Link
 
-	// Merge a remote node, assumed node is aligned between local & remote tree
-	Merge(remote Node) (MergeResult, error)
+	// Merge a remote node, assumed node is aligned between local & remote tree,
+	// and two nodes have a diverged history
+	MergeDiverged(remote Node) (MergeResult, error)
 }
 
 type File interface {
@@ -85,4 +86,16 @@ func Filename(file fs.File) (string, error) {
 		return "", err
 	}
 	return fi.Name(), nil
+}
+
+func NodeFS(n Node) (MerkleDagFS, error) {
+	st, err := n.Stat()
+	if err != nil {
+		return nil, err
+	}
+	mdfs, ok := st.Sys().(MerkleDagFS)
+	if !ok {
+		return nil, fmt.Errorf("node Sys is not a MerkleDagFS")
+	}
+	return mdfs, nil
 }

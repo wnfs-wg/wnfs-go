@@ -419,77 +419,32 @@ func (t *PublicTree) writeHeader(ctx context.Context, links mdstore.Links) (base
 	}, nil
 }
 
-func (t *PublicTree) Merge(remote base.Node) (result base.MergeResult, err error) {
-	switch x := remote.(type) {
-	case *PublicFile:
-		// need to pick either the file or the directory based on version history
-		return result, fmt.Errorf("unfinished: merging public file onto directory")
+func (t *PublicTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
+	switch x := n.(type) {
 	case *PublicTree:
 		log.Debugw("merge trees", "local", t.cid, "remote", x.cid)
-		return t.mergeTree(x)
-	default:
-		return result, fmt.Errorf("root node mismatch. expected Public Tree, got: %T", remote)
-	}
-}
-
-func (t *PublicTree) mergeTree(remote *PublicTree) (result base.MergeResult, err error) {
-	log.Debugw("comparing tree histories", "name", t.name)
-	// fast-check for equality
-	if t.cid.Equals(remote.cid) {
-		return base.MergeResult{
-			Type: base.MTInSync,
-			Cid:  t.cid,
-			// Userland: t.,
-			// Metadata: t,
-			Size:   t.size,
-			IsFile: false,
-		}, nil
-	}
-
-	lcl := t
-	lclGen, remGen := 0, 0
-	for {
-		rem := remote
-		remGen = 0
-
-		for {
-			if lcl.cid.Equals(rem.cid) {
-				log.Debugw("found common version", "diverged_at_cid", lcl.cid, "local_generation", lclGen, "remote_generation", remGen)
-
-				if lclGen == 0 && remGen > 0 {
-					result.Type = base.MTFastForward
-					// TODO(b5): copy remote history into local tree?
-					*t = *remote
-					return result, nil
-				} else if lclGen > 0 && remGen == 0 {
-					result.Type = base.MTLocalAhead
-					return result, nil
-				} else {
-					// both local & remote are greater than zero, have diverged
-					result.Type = base.MTMergeCommit
-					return t.mergeDivergedTree(remote)
-				}
-			}
-
-			if rem.previous == nil {
-				break
-			}
-			if rem, err = LoadTreeFromCID(rem.fs, rem.name, *rem.previous); err != nil {
-				return result, err
-			}
-			remGen++
-		}
-
-		if lcl.previous == nil {
-			// TODO (b5): instead of erroring out here, just take the longer history
-			// and create a merge commit
-			return result, base.ErrNoCommonHistory
-		}
-		// step back one generation
-		if lcl, err = LoadTreeFromCID(lcl.fs, lcl.name, *lcl.previous); err != nil {
+		return t.mergeDivergedTree(x)
+	case *PublicFile:
+		result.Type = base.MTMergeCommit
+		nHist := n.AsHistoryEntry()
+		t.merge = &nHist.Cid
+		t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+		update, err := t.Put()
+		if err != nil {
 			return result, err
 		}
-		lclGen++
+
+		si := update.ToSkeletonInfo()
+		return base.MergeResult{
+			Type:     base.MTMergeCommit,
+			Cid:      si.Cid,
+			Userland: si.Cid,
+			Metadata: si.Metadata,
+			Size:     update.ToLink("").Size,
+			IsFile:   true,
+		}, nil
+	default:
+		return result, fmt.Errorf("cannot merge node of type %T onto public directory", n)
 	}
 }
 
@@ -499,7 +454,7 @@ func (t *PublicTree) mergeDivergedTree(remote *PublicTree) (res base.MergeResult
 
 		if !existsLocally {
 			// remote has a file local is missing, add it.
-			n, err := loadNodeFromInfo(remote.fs, remName, remInfo)
+			n, err := loadNodeFromSkeletonInfo(remote.fs, remName, remInfo)
 			if err != nil {
 				return res, err
 			}
@@ -515,16 +470,16 @@ func (t *PublicTree) mergeDivergedTree(remote *PublicTree) (res base.MergeResult
 		}
 
 		// node exists in both trees & CIDs are inequal. merge recursively
-		lcl, err := loadNodeFromInfo(t.fs, remName, localInfo)
+		lcl, err := loadNodeFromSkeletonInfo(t.fs, remName, localInfo)
 		if err != nil {
 			return res, err
 		}
-		rem, err := loadNodeFromInfo(remote.fs, remName, remInfo)
+		rem, err := loadNodeFromSkeletonInfo(remote.fs, remName, remInfo)
 		if err != nil {
 			return res, err
 		}
 
-		res, err := lcl.Merge(rem)
+		res, err := Merge(lcl, rem)
 		if err != nil {
 			return res, err
 		}
@@ -827,100 +782,29 @@ func (f *PublicFile) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
-func (f *PublicFile) Merge(remote base.Node) (result base.MergeResult, err error) {
-	switch x := remote.(type) {
-	case *PublicFile:
-		// need to pick either the file or the directory based on version history
-		log.Debugw("merge files", "local", f.cid, "remote", x.cid)
-		return f.mergeFile(x)
-	case *PublicTree:
-		return result, fmt.Errorf("unfinished: merging public tree onto file")
-	default:
-		return result, fmt.Errorf("root node mismatch. expected Public Tree, got: %T", remote)
-	}
-}
-
-func (f *PublicFile) mergeFile(remote *PublicFile) (result base.MergeResult, err error) {
-	log.Debugw("mergeFile", "local_name", f.name, "local_cid", f.cid, "remote_name", remote.name, "remote_cid", remote.cid)
-	result.IsFile = true
-	// fast-check for equality
-	if f.cid.Equals(remote.cid) {
-		return base.MergeResult{
-			Type: base.MTInSync,
-			Cid:  f.cid,
-			// Userland: f.userland,
-			// Metadata: f.metadata,
-			Size:   f.size,
-			IsFile: true,
-		}, nil
+func (f *PublicFile) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
+	result.Type = base.MTMergeCommit
+	bHist := b.AsHistoryEntry()
+	f.merge = &bHist.Cid
+	f.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	if err := f.ensureContent(); err != nil {
+		return result, err
 	}
 
-	lcl := f
-	lclGen, remGen := 0, 0
-	for {
-		rem := remote
-		remGen = 0
-
-		for {
-			if lcl.cid.Equals(rem.cid) {
-				log.Debugw("found common version", "diverged_at_cid", lcl.cid, "local_generation", lclGen, "remote_generation", remGen)
-
-				if lclGen == 0 && remGen > 0 {
-					result.Type = base.MTFastForward
-					result.Cid = remote.cid
-					// TODO(b5): copy remote history into local tree?
-					*f = *remote
-					return result, nil
-				} else if lclGen > 0 && remGen == 0 {
-					result.Type = base.MTLocalAhead
-					result.Cid = f.cid
-					return result, nil
-				} else {
-					// both local & remote are greater than zero, have diverged
-					result.Type = base.MTMergeCommit
-					f.merge = &remote.cid
-					f.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
-					if err := f.ensureContent(); err != nil {
-						return result, err
-					}
-
-					update, err := f.Put()
-					if err != nil {
-						return result, err
-					}
-
-					si := update.ToSkeletonInfo()
-					return base.MergeResult{
-						Type:     base.MTMergeCommit,
-						Cid:      si.Cid,
-						Userland: si.Cid,
-						Metadata: si.Metadata,
-						Size:     update.ToLink("").Size,
-						IsFile:   true,
-					}, nil
-				}
-			}
-
-			if rem.previous == nil {
-				break
-			}
-			if rem, err = LoadFileFromCID(rem.fs, rem.name, *rem.previous); err != nil {
-				return result, err
-			}
-			remGen++
-		}
-
-		if lcl.previous == nil {
-			// TODO (b5): instead of erroring out here, just take the longer history
-			// and create a merge commit
-			return result, base.ErrNoCommonHistory
-		}
-		// step back one generation
-		if lcl, err = LoadFileFromCID(lcl.fs, lcl.name, *lcl.previous); err != nil {
-			return result, err
-		}
-		lclGen++
+	update, err := f.Put()
+	if err != nil {
+		return result, err
 	}
+
+	si := update.ToSkeletonInfo()
+	return base.MergeResult{
+		Type:     base.MTMergeCommit,
+		Cid:      si.Cid,
+		Userland: si.Cid,
+		Metadata: si.Metadata,
+		Size:     update.ToLink("").Size,
+		IsFile:   true,
+	}, nil
 }
 
 type PutResult struct {
@@ -955,7 +839,133 @@ func (r PutResult) ToSkeletonInfo() base.SkeletonInfo {
 	}
 }
 
-func loadNodeFromInfo(fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
+func Merge(a, b base.Node) (result base.MergeResult, err error) {
+	var (
+		aCur, bCur   = a, b
+		aHist, bHist = a.AsHistoryEntry(), b.AsHistoryEntry()
+		aGen, bGen   = 0, 0
+	)
+
+	// check for equality first
+	if aHist.Cid.Equals(bHist.Cid) {
+		return base.MergeResult{
+			Type: base.MTInSync,
+			Cid:  aHist.Cid,
+			// Userland: aHist.Userland,
+			// Metadata: bHist.Metadata,
+			Size:   aHist.Size,
+			IsFile: aHist.Metadata.IsFile,
+		}, nil
+	}
+
+	afs, err := base.NodeFS(a)
+	if err != nil {
+		return result, err
+	}
+	bfs, err := base.NodeFS(b)
+	if err != nil {
+		return result, err
+	}
+
+	for {
+		bCur = b
+		bGen = 0
+		bHist = b.AsHistoryEntry()
+		for {
+			if aHist.Cid.Equals(bHist.Cid) {
+				if aGen == 0 && bGen > 0 {
+					// fast-forward
+					bHist = b.AsHistoryEntry()
+					return base.MergeResult{
+						Type: base.MTFastForward,
+						// TODO(b5):
+						// 	Userland: si.Cid,
+						// 	Metadata: si.Metadata,
+						Cid:    bHist.Cid,
+						Size:   bHist.Size,
+						IsFile: bHist.Metadata.IsFile,
+					}, nil
+				} else if aGen > 0 && bGen == 0 {
+					result.Type = base.MTLocalAhead
+					aHist := a.AsHistoryEntry()
+					return base.MergeResult{
+						Type:   base.MTLocalAhead,
+						Cid:    aHist.Cid,
+						Size:   aHist.Size,
+						IsFile: aHist.Metadata.IsFile,
+					}, nil
+				} else {
+					// both local & remote are greater than zero, have diverged
+					result.Type = base.MTMergeCommit
+					if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+						return a.MergeDiverged(b)
+					}
+					return b.MergeDiverged(a)
+				}
+			}
+
+			if bHist.Previous == nil {
+				break
+			}
+			name, err := base.Filename(bCur)
+			if err != nil {
+				return result, err
+			}
+			bCur, err = loadNode(bfs, name, *bHist.Previous)
+			if err != nil {
+				return result, err
+			}
+			bHist = bCur.AsHistoryEntry()
+			bGen++
+		}
+
+		if aHist.Previous == nil {
+			break
+		}
+		name, err := base.Filename(aCur)
+		if err != nil {
+			return result, err
+		}
+		aCur, err = loadNode(afs, name, *aHist.Previous)
+		if err != nil {
+			return result, err
+		}
+		aHist = aCur.AsHistoryEntry()
+		aGen++
+	}
+
+	// no common history, merge based on heigh & alpha-sorted-cid
+	if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+		return a.MergeDiverged(b)
+	}
+	return b.MergeDiverged(a)
+}
+
+// load a public node
+func loadNode(fs base.MerkleDagFS, name string, id cid.Cid) (n base.Node, err error) {
+	ctx := fs.Context()
+	st := fs.DagStore()
+	header, err := st.GetNode(ctx, id)
+	if err != nil {
+		return n, err
+	}
+	metaLink := header.Links().Get(base.MetadataLinkName)
+	if metaLink == nil {
+		return nil, fmt.Errorf("cid %s does not point to a well-formed public header block: missing meta link", id.String())
+	}
+
+	md, err := base.LoadMetadata(ctx, st, metaLink.Cid)
+	if err != nil {
+		return n, fmt.Errorf("error loading meta at cid %s: %w", metaLink.Cid, err)
+	}
+	if md.IsFile {
+		return LoadFileFromCID(fs, name, id)
+	}
+
+	return LoadTreeFromCID(fs, name, id)
+}
+
+func loadNodeFromSkeletonInfo(fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
 	if info.IsFile {
 		return LoadFileFromCID(fs, name, info.Cid)
 	}
