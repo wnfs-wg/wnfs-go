@@ -3,10 +3,13 @@ package private
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	fuzz "github.com/google/gofuzz"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRatchet(t *testing.T) {
@@ -99,6 +102,58 @@ func TestRatchetCoding(t *testing.T) {
 	}
 
 	assertRatchetsEqual(t, &a, b)
+}
+
+func TestRatchetCompare(t *testing.T) {
+	one := new(SpiralRatchet)
+	*one = zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+	two := one.Copy()
+	two.Inc()
+	twentyFiveThousand := one.Copy()
+	twentyFiveThousand.IncBy(25000)
+
+	oneHunderdThousand := one.Copy()
+	oneHunderdThousand.IncBy(100000)
+
+	cases := []struct {
+		a, b             *SpiralRatchet
+		maxSteps, expect int
+	}{
+		{a: one, b: one, maxSteps: 0, expect: 0},
+		{a: one, b: two, maxSteps: 1, expect: -1},
+		{a: two, b: one, maxSteps: 1, expect: 1},
+		{a: two, b: one, maxSteps: 1, expect: 1},
+		{a: twentyFiveThousand, b: one, maxSteps: 10, expect: 25000},
+		{a: one, b: oneHunderdThousand, maxSteps: 10, expect: -100000},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case_%d", i), func(t *testing.T) {
+			got, err := c.a.Compare(*c.b, 1)
+			require.Nil(t, err)
+			assert.Equal(t, c.expect, got)
+		})
+	}
+
+	unrelated := new(SpiralRatchet)
+	*unrelated = zero(shasumFromHex("500b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+
+	_, err := one.Compare(*unrelated, 100000)
+	assert.ErrorIs(t, err, ErrUnknownRatchetRelation)
+}
+
+func TestRatchetEqual(t *testing.T) {
+	a := zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+	b := zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+	c := zero(shasumFromHex("0000000000000000000000000000000000000000000000000000000000000000"))
+
+	if !a.Equal(b) {
+		t.Errorf("unexpected inequality. a: %q b: %q", a, b)
+	}
+
+	if b.Equal(c) {
+		t.Errorf("unexpected equality: a: %q b:%q", a, b)
+	}
 }
 
 func TestCompliment(t *testing.T) {

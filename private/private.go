@@ -178,6 +178,10 @@ func (r *Root) putHamt() error {
 	return nil
 }
 
+func (r *Root) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
+	return result, fmt.Errorf("unfinished: private.Root.MergeDiverged")
+}
+
 type TreeInfo struct {
 	INum     INumber
 	Size     int64
@@ -610,6 +614,10 @@ func (pt *Tree) removeUserlandLink(name string) {
 	pt.info.Metadata.UnixMeta.Mtime = base.Timestamp().Unix()
 }
 
+func (pt *Tree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
+	return result, fmt.Errorf("unfinished: private.Tree.MergeDiverged")
+}
+
 type File struct {
 	fs      base.PrivateMerkleDagFS
 	ratchet *SpiralRatchet
@@ -865,4 +873,10 @@ func (r PutResult) ToPrivateLink(name string) PrivateLink {
 		Key:     r.Key,
 		Pointer: r.Pointer,
 	}
+}
+
+func Merge(a, b *Root) (result base.MergeResult, err error) {
+	// 1. Merge root CIDs
+	// 2. Merge HAMTS
+	return base.MergeResult{}, fmt.Errorf("unfinished: private Merge")
 }

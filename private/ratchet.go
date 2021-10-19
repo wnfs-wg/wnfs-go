@@ -52,7 +52,7 @@ func zero(seed [32]byte) SpiralRatchet {
 	}
 }
 
-func (r *SpiralRatchet) Key() Key {
+func (r SpiralRatchet) Key() Key {
 	// xor is associative, so order shouldn't matter
 	v := xor(r.large, xor(r.medium, r.small))
 	return hash(v[:])
@@ -100,7 +100,7 @@ func DecodeRatchet(s string) (*SpiralRatchet, error) {
 	return r, nil
 }
 
-func (r *SpiralRatchet) Encode() string {
+func (r SpiralRatchet) Encode() string {
 	b := &bytes.Buffer{}
 	b.Write(r.small[:])
 	b.WriteByte(r.smallCounter)
@@ -123,6 +123,74 @@ func (r *SpiralRatchet) Inc() {
 func (r *SpiralRatchet) IncBy(n int) {
 	jumped, _ := incBy(*r, n)
 	*r = jumped
+}
+
+var ErrUnknownRatchetRelation = fmt.Errorf("unknown")
+
+func (r SpiralRatchet) Compare(b SpiralRatchet, maxSteps int) (int, error) {
+	var (
+		leftCounter  = r.combinedCounter()
+		rightCounter = b.combinedCounter()
+	)
+
+	if r.large == b.large {
+		if leftCounter == rightCounter {
+			return 0, nil
+		}
+		return leftCounter - rightCounter, nil
+	}
+
+	// here, the large digit always differs. So one of the ratchets will always be bigger,
+	// they can't be equal.
+	// We can find out which one is bigger by hashing both at the same time and looking at
+	// when one created the same digit as the other, essentially racing the large digit's
+	// recursive hashes.
+
+	var (
+		leftLargeInital   = r.large
+		rightLargeInitial = b.large
+		leftLarge         = r.large
+		rightLarge        = b.large
+		leftLargeCounter  = 0
+		rightLargeCounter = 0
+	)
+
+	// Since the two ratchets might just be generated from a totally different setup, we
+	// can never _really_ know which one is the bigger one. They might be unrelated.
+
+	for maxSteps > 0 {
+		leftLarge = hash32(leftLarge)
+		rightLarge = hash32(rightLarge)
+		leftLargeCounter++
+		rightLargeCounter++
+
+		// largerCountAhead is how many `inc`s the larger one is head of the smaller one
+		if rightLarge == leftLargeInital {
+			// rightLargeCounter * 256*256 is the count of `inc`s applied via advancing the large digit continually
+			// -rightCounter is the difference between `right` and its next large epoch.
+			// leftCounter is just what's left to add because of the count at which `left` is.
+			largerCountAhead := rightLargeCounter*256*256 - rightCounter + leftCounter
+			return largerCountAhead, nil
+		}
+
+		if leftLarge == rightLargeInitial {
+			// In this case, we compute the same difference, but return the negative to indicate
+			// that `right` is bigger than `left` rather than the other way around.
+			largerCountAhead := leftLargeCounter*256*256 - leftCounter + rightCounter
+			return -largerCountAhead, nil
+		}
+		maxSteps--
+	}
+
+	return 0, ErrUnknownRatchetRelation
+}
+
+func (r SpiralRatchet) Equal(b SpiralRatchet) bool {
+	return r.small == b.small &&
+		r.smallCounter == b.smallCounter &&
+		r.medium == b.medium &&
+		r.mediumCounter == b.mediumCounter &&
+		r.large == b.large
 }
 
 func (r SpiralRatchet) combinedCounter() int {
