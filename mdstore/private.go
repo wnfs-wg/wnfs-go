@@ -19,12 +19,14 @@ import (
 	mh "github.com/multiformats/go-multihash"
 	cipherchunker "github.com/qri-io/wnfs-go/cipherchunker"
 	cipherfile "github.com/qri-io/wnfs-go/cipherfile"
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 type PrivateStore interface {
 	PutEncryptedFile(f fs.File, key []byte) (PutResult, error)
 	GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error)
 	Blockservice() blockservice.BlockService
+	RatchetStore() ratchet.Store
 }
 
 func newAESGCMCipher(key []byte) (cipher.AEAD, error) {
@@ -41,15 +43,17 @@ type cipherStore struct {
 	ctx   context.Context
 	bserv blockservice.BlockService
 	dag   ipld.DAGService
+	rs    ratchet.Store
 }
 
 var _ PrivateStore = (*cipherStore)(nil)
 
-func NewPrivateStore(ctx context.Context, bserv blockservice.BlockService) (PrivateStore, error) {
+func NewPrivateStore(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store) (PrivateStore, error) {
 	return &cipherStore{
 		ctx:   ctx,
 		bserv: bserv,
 		dag:   merkledag.NewDAGService(bserv),
+		rs:    rs,
 	}, nil
 }
 
@@ -102,6 +106,8 @@ func (cs *cipherStore) PutEncryptedFile(f fs.File, key []byte) (PutResult, error
 		Size: sr.Size(),
 	}, nil
 }
+
+func (cs *cipherStore) RatchetStore() ratchet.Store { return cs.rs }
 
 type sizeReader struct {
 	size int

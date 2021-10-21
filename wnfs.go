@@ -14,6 +14,7 @@ import (
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	private "github.com/qri-io/wnfs-go/private"
 	"github.com/qri-io/wnfs-go/public"
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 var log = golog.Logger("wnfs")
@@ -93,13 +94,13 @@ var (
 	_ mdstore.DagNode  = (*fileSystem)(nil)
 )
 
-func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rootKey Key) (WNFS, error) {
+func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet.Store, rootKey Key) (WNFS, error) {
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: dagStore,
 	}
 
-	root, err := newEmptyRootTree(fs, rootKey)
+	root, err := newEmptyRootTree(fs, rs, rootKey)
 	if err != nil {
 		return nil, err
 	}
@@ -121,14 +122,14 @@ func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rootKey Ke
 	return fs, nil
 }
 
-func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, id cid.Cid, rootKey Key, rootName PrivateName) (WNFS, error) {
+func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (WNFS, error) {
 	log.Debugw("FromCID", "cid", id)
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: dagStore,
 	}
 
-	root, err := newRootTreeFromCID(fs, id, rootKey, rootName)
+	root, err := newRootTreeFromCID(fs, rs, id, rootKey, rootName)
 	if err != nil {
 		return nil, fmt.Errorf("opening root tree %s:\n%w", id, err)
 	}
@@ -374,14 +375,14 @@ type rootTree struct {
 	Private *private.Root
 }
 
-func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
+func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (*rootTree, error) {
 	root := &rootTree{
 		fs:     fs,
 		Public: public.NewEmptyTree(fs, FileHierarchyNamePublic),
 		Pretty: &base.BareTree{},
 	}
 
-	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice())
+	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice(), rs)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +395,7 @@ func newEmptyRootTree(fs base.MerkleDagFS, rootKey Key) (*rootTree, error) {
 	return root, nil
 }
 
-func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName PrivateName) (*rootTree, error) {
+func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (*rootTree, error) {
 	node, err := fs.DagStore().GetNode(fs.Context(), id)
 	if err != nil {
 		return nil, fmt.Errorf("loading header block %q:\n%w", id.String(), err)
@@ -412,7 +413,7 @@ func newRootTreeFromCID(fs base.MerkleDagFS, id cid.Cid, rootKey Key, rootName P
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
-	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice())
+	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice(), rs)
 	if err != nil {
 		return nil, err
 	}

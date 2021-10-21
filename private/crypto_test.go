@@ -9,6 +9,7 @@ import (
 	"github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 var testRootKey Key = [32]byte{
@@ -22,7 +23,8 @@ func TestCryptoFile(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice())
+	rs := ratchet.NewMemStore(ctx)
+	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}

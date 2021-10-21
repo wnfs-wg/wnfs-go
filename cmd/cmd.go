@@ -54,7 +54,7 @@ func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
 	if err != nil {
 		errExit("error: getting state path: %s\n", err)
 	}
-	state, err := LoadOrCreateExternalState(statePath)
+	state, err := LoadOrCreateExternalState(ctx, statePath)
 	if err != nil {
 		errExit("error: loading external state: %s\n", err)
 	}
@@ -62,12 +62,12 @@ func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
 	var fs wnfs.WNFS
 	if state.RootCID.Equals(cid.Cid{}) {
 		fmt.Printf("creating new wnfs filesystem...")
-		if fs, err = wnfs.NewEmptyFS(ctx, store, state.RootKey); err != nil {
+		if fs, err = wnfs.NewEmptyFS(ctx, store, state.RatchetStore(), state.RootKey); err != nil {
 			errExit("error: creating empty WNFS: %s\n", err)
 		}
 		fmt.Println("done")
 	} else {
-		if fs, err = wnfs.FromCID(ctx, store, state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
+		if fs, err = wnfs.FromCID(ctx, store, state.RatchetStore(), state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
 			errExit("error: opening WNFS CID %s:\n%s\n", state.RootCID, err.Error())
 		}
 	}

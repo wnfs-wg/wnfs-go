@@ -1,4 +1,4 @@
-package private
+package ratchet
 
 import (
 	"bytes"
@@ -6,15 +6,18 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"golang.org/x/crypto/sha3"
+	golog "github.com/ipfs/go-log"
+	sha3 "golang.org/x/crypto/sha3"
 )
+
+var log = golog.Logger("wnfs")
 
 // Flag the encoding. The default encoding is:
 // * base64URL-unpadded (signified with u)
 // * SHA-256 (0x16: "F" in base64URL)
 const ratchetSignifier = "uF"
 
-type SpiralRatchet struct {
+type Spiral struct {
 	large         [32]byte
 	medium        [32]byte // bounded to 256 elements
 	mediumCounter uint8
@@ -22,7 +25,7 @@ type SpiralRatchet struct {
 	smallCounter  uint8
 }
 
-func NewSpiralRatchet() *SpiralRatchet {
+func NewSpiral() *Spiral {
 	seedData := make([]byte, 34) // 32 bytes for the seed, plus 2 extra bytes to randomize small & medium starts
 	if _, err := rand.Read(seedData); err != nil {
 		panic(err)
@@ -35,31 +38,31 @@ func NewSpiralRatchet() *SpiralRatchet {
 	medSeed := hash32(compliement(seed))
 	smallSeed := hash32(compliement(medSeed))
 
-	return &SpiralRatchet{
+	return &Spiral{
 		large:  hash32(seed),
 		medium: hash32N(medSeed, incMed),
 		small:  hash32N(smallSeed, incSmall),
 	}
 }
 
-func zero(seed [32]byte) SpiralRatchet {
+func zero(seed [32]byte) Spiral {
 	med := hash32(compliement(seed))
 	small := hash32(compliement(med))
-	return SpiralRatchet{
+	return Spiral{
 		large:  hash32(seed),
 		medium: med,
 		small:  small,
 	}
 }
 
-func (r SpiralRatchet) Key() Key {
+func (r Spiral) Key() [32]byte {
 	// xor is associative, so order shouldn't matter
 	v := xor(r.large, xor(r.medium, r.small))
 	return hash(v[:])
 }
 
-func (r *SpiralRatchet) Copy() *SpiralRatchet {
-	return &SpiralRatchet{
+func (r *Spiral) Copy() *Spiral {
+	return &Spiral{
 		large:         r.large,
 		medium:        r.medium,
 		mediumCounter: r.mediumCounter,
@@ -68,7 +71,7 @@ func (r *SpiralRatchet) Copy() *SpiralRatchet {
 	}
 }
 
-func DecodeRatchet(s string) (*SpiralRatchet, error) {
+func DecodeSpiral(s string) (*Spiral, error) {
 	if len(s) != 133 {
 		return nil, fmt.Errorf("invalid ratchet length")
 	}
@@ -81,7 +84,7 @@ func DecodeRatchet(s string) (*SpiralRatchet, error) {
 		return nil, err
 	}
 
-	r := &SpiralRatchet{}
+	r := &Spiral{}
 	for i, d := range data {
 		switch {
 		case i < 32:
@@ -100,7 +103,7 @@ func DecodeRatchet(s string) (*SpiralRatchet, error) {
 	return r, nil
 }
 
-func (r SpiralRatchet) Encode() string {
+func (r Spiral) Encode() string {
 	b := &bytes.Buffer{}
 	b.Write(r.small[:])
 	b.WriteByte(r.smallCounter)
@@ -110,7 +113,7 @@ func (r SpiralRatchet) Encode() string {
 	return ratchetSignifier + base64.RawURLEncoding.EncodeToString(b.Bytes())
 }
 
-func (r *SpiralRatchet) Inc() {
+func (r *Spiral) Inc() {
 	if r.smallCounter >= 255 {
 		*r, _ = nextMediumEpoch(*r)
 		return
@@ -120,14 +123,14 @@ func (r *SpiralRatchet) Inc() {
 	r.smallCounter += 1
 }
 
-func (r *SpiralRatchet) IncBy(n int) {
+func (r *Spiral) IncBy(n int) {
 	jumped, _ := incBy(*r, n)
 	*r = jumped
 }
 
 var ErrUnknownRatchetRelation = fmt.Errorf("unknown")
 
-func (r SpiralRatchet) Compare(b SpiralRatchet, maxSteps int) (int, error) {
+func (r Spiral) Compare(b Spiral, maxSteps int) (int, error) {
 	var (
 		leftCounter  = r.combinedCounter()
 		rightCounter = b.combinedCounter()
@@ -185,7 +188,7 @@ func (r SpiralRatchet) Compare(b SpiralRatchet, maxSteps int) (int, error) {
 	return 0, ErrUnknownRatchetRelation
 }
 
-func (r SpiralRatchet) Equal(b SpiralRatchet) bool {
+func (r Spiral) Equal(b Spiral) bool {
 	return r.small == b.small &&
 		r.smallCounter == b.smallCounter &&
 		r.medium == b.medium &&
@@ -193,11 +196,11 @@ func (r SpiralRatchet) Equal(b SpiralRatchet) bool {
 		r.large == b.large
 }
 
-func (r SpiralRatchet) combinedCounter() int {
+func (r Spiral) combinedCounter() int {
 	return 256*int(r.mediumCounter) + int(r.smallCounter)
 }
 
-func incBy(r SpiralRatchet, n int) (jumped SpiralRatchet, jumpCount int) {
+func incBy(r Spiral, n int) (jumped Spiral, jumpCount int) {
 	if n <= 0 {
 		return r, 0
 	} else if n >= 256*256-r.combinedCounter() {
@@ -216,18 +219,18 @@ func incBy(r SpiralRatchet, n int) (jumped SpiralRatchet, jumpCount int) {
 	return r, n
 }
 
-func nextLargeEpoch(r SpiralRatchet) (jumped SpiralRatchet, jumpCount int) {
+func nextLargeEpoch(r Spiral) (jumped Spiral, jumpCount int) {
 	jumped = zero(r.large)
 	jumpCount = 256*256 - r.combinedCounter()
 	return jumped, jumpCount
 }
 
-func nextMediumEpoch(r SpiralRatchet) (jumped SpiralRatchet, jumpCount int) {
+func nextMediumEpoch(r Spiral) (jumped Spiral, jumpCount int) {
 	if r.mediumCounter >= 255 {
 		return nextLargeEpoch(r)
 	}
 
-	jumped = SpiralRatchet{
+	jumped = Spiral{
 		large:         r.large,
 		medium:        hash32(r.medium),
 		mediumCounter: r.mediumCounter + 1,

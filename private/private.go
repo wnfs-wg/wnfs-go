@@ -20,6 +20,7 @@ import (
 	"github.com/qri-io/wnfs-go/base"
 	"github.com/qri-io/wnfs-go/mdstore"
 	"github.com/qri-io/wnfs-go/public"
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 var log = golog.Logger("wnfs")
@@ -102,7 +103,6 @@ func LoadRoot(ctx context.Context, store mdstore.PrivateStore, name string, hamt
 		hamtRootCID: &hamtCID,
 	}
 
-	// if privateRoot, err := mmpt.Get(string(rootName)); err == nil {
 	privateTree, err = LoadTree(root, name, rootKey, privateRoot)
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (r *Root) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return res, r.putHamt()
+	return res, r.putRoot()
 }
 
 func (r *Root) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.PutResult, err error) {
@@ -138,7 +138,7 @@ func (r *Root) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.Pu
 	if err != nil {
 		return nil, err
 	}
-	return res, r.putHamt()
+	return res, r.putRoot()
 }
 
 func (r *Root) Rm(path base.Path) (base.PutResult, error) {
@@ -146,7 +146,7 @@ func (r *Root) Rm(path base.Path) (base.PutResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return res, r.putHamt()
+	return res, r.putRoot()
 }
 
 func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
@@ -154,19 +154,19 @@ func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return res, r.putHamt()
+	return res, r.putRoot()
 }
 
 func (r *Root) Put() (base.PutResult, error) {
+	log.Debugw("Root.Put")
 	res, err := r.Tree.Put()
 	if err != nil {
 		return nil, err
 	}
-	err = r.putHamt()
-	return res, err
+	return res, r.putRoot()
 }
 
-func (r *Root) putHamt() error {
+func (r *Root) putRoot() error {
 	if r.hamt != nil {
 		id, err := r.hamt.Write(r.ctx)
 		if err != nil {
@@ -175,7 +175,7 @@ func (r *Root) putHamt() error {
 		log.Debugw("writing HAMT", "cid", id)
 		r.hamtRootCID = &id
 	}
-	return nil
+	return r.store.RatchetStore().Flush()
 }
 
 func (r *Root) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
@@ -193,7 +193,7 @@ type TreeInfo struct {
 
 type Tree struct {
 	fs      base.PrivateMerkleDagFS
-	ratchet *SpiralRatchet
+	ratchet *ratchet.Spiral
 	name    string  // not stored on the node. used to satisfy fs.File interface
 	cid     cid.Cid // header node cid this tree was loaded from. empty if unstored
 	// header
@@ -219,7 +219,7 @@ func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string
 
 	return &Tree{
 		fs:      fs,
-		ratchet: NewSpiralRatchet(),
+		ratchet: ratchet.NewSpiral(),
 		name:    name,
 		info: TreeInfo{
 			INum:  in,
@@ -250,7 +250,7 @@ func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Tr
 		return nil, err
 	}
 
-	ratchet, err := DecodeRatchet(info.Ratchet)
+	ratchet, err := ratchet.DecodeSpiral(info.Ratchet)
 	if err != nil {
 		return nil, fmt.Errorf("decoding ratchet: %w", err)
 	}
@@ -303,7 +303,7 @@ func (pt *Tree) AsLink() mdstore.Link {
 }
 
 func (pt *Tree) PrivateName() (Name, error) {
-	knf, err := AddKey(pt.info.Bnf, pt.ratchet.Key())
+	knf, err := AddKey(pt.info.Bnf, Key(pt.ratchet.Key()))
 	if err != nil {
 		return "", err
 	}
@@ -587,6 +587,10 @@ func (pt *Tree) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
+	if _, err = pt.fs.PrivateStore().RatchetStore().PutRatchet(pt.fs.Context(), string(privName), pt.ratchet); err != nil {
+		return nil, err
+	}
+
 	idBytes := CborByteArray(res.Cid.Bytes())
 	if err := pt.fs.HAMT().Set(pt.fs.Context(), string(privName), &idBytes); err != nil {
 		return nil, err
@@ -620,7 +624,7 @@ func (pt *Tree) MergeDiverged(n base.Node) (result base.MergeResult, err error) 
 
 type File struct {
 	fs      base.PrivateMerkleDagFS
-	ratchet *SpiralRatchet
+	ratchet *ratchet.Spiral
 	name    string  // not persisted. used to implement fs.File interface
 	cid     cid.Cid // cid header was loaded from. empty if new
 	info    FileInfo
@@ -647,7 +651,7 @@ func NewFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File) (*Fil
 
 	return &File{
 		fs:      fs,
-		ratchet: NewSpiralRatchet(),
+		ratchet: ratchet.NewSpiral(),
 		content: f,
 		info: FileInfo{
 			INumber:        in,
@@ -674,7 +678,7 @@ func LoadFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Ci
 		return nil, err
 	}
 
-	ratchet, err := DecodeRatchet(info.Ratchet)
+	ratchet, err := ratchet.DecodeSpiral(info.Ratchet)
 	if err != nil {
 		return nil, err
 	}
@@ -777,6 +781,10 @@ func (pf *File) Put() (PutResult, error) {
 	// create private name from key
 	privName, err := pf.Name()
 	if err != nil {
+		return PutResult{}, err
+	}
+
+	if _, err = store.RatchetStore().PutRatchet(pf.fs.Context(), string(privName), pf.ratchet); err != nil {
 		return PutResult{}, err
 	}
 
