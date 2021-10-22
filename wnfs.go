@@ -13,8 +13,8 @@ import (
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	private "github.com/qri-io/wnfs-go/private"
-	"github.com/qri-io/wnfs-go/public"
-	"github.com/qri-io/wnfs-go/ratchet"
+	public "github.com/qri-io/wnfs-go/public"
+	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
 var log = golog.Logger("wnfs")
@@ -332,6 +332,11 @@ func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error)
 	if err != nil {
 		return nil, err
 	}
+
+	if pr, ok := node.(*private.Root); ok {
+		return pr.History(relPath, max)
+	}
+
 	f, err := node.Get(relPath)
 	if err != nil {
 		return nil, err

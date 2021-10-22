@@ -51,6 +51,7 @@ func (s *ratchetStore) PutRatchet(ctx context.Context, name string, ratchet *Spi
 func (s *ratchetStore) OldestKnownRatchet(ctx context.Context, name string) (*Spiral, error) {
 	s.lk.Lock()
 	defer s.lk.Unlock()
+	log.Debugw("get ratchet", "name", name)
 
 	got, exists := s.cache[string(name)]
 	if !exists {

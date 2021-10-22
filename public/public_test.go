@@ -15,8 +15,8 @@ import (
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assert "github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
 )
 
 func init() {

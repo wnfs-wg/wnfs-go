@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +41,7 @@ type Root struct {
 }
 
 var (
+	_ privateNode             = (*Root)(nil)
 	_ base.PrivateMerkleDagFS = (*Root)(nil)
 	_ mdstore.DagNode         = (*Root)(nil)
 	_ base.Tree               = (*Root)(nil)
@@ -198,12 +200,10 @@ type Tree struct {
 	cid     cid.Cid // header node cid this tree was loaded from. empty if unstored
 	// header
 	info TreeInfo
-
-	// TODO(b5): private history
-	// history History
 }
 
 var (
+	_ privateNode     = (*Tree)(nil)
 	_ mdstore.DagNode = (*Tree)(nil)
 	_ base.Tree       = (*Tree)(nil)
 	_ fs.File         = (*Tree)(nil)
@@ -266,22 +266,14 @@ func LoadTree(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Cid) (*Tr
 }
 
 func LoadTreeFromName(fs base.PrivateMerkleDagFS, key Key, name string, pn Name) (*Tree, error) {
-	exists, data, err := fs.HAMT().FindRaw(fs.Context(), string(pn))
+	id, err := cidFromPrivateName(fs, pn)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, base.ErrNotFound
-	}
-
-	_, id, err := cid.CidFromBytes(data)
-	if err != nil {
-		return nil, err
-	}
-
 	return LoadTree(fs, name, key, id)
 }
 
+func (pt *Tree) Ratchet() *ratchet.Spiral       { return pt.ratchet }
 func (pt *Tree) BareNamefilter() BareNamefilter { return pt.info.Bnf }
 func (pt *Tree) INumber() INumber               { return pt.info.INum }
 func (pt *Tree) Cid() cid.Cid                   { return pt.cid }
@@ -289,9 +281,13 @@ func (pt *Tree) Links() mdstore.Links           { return mdstore.NewLinks() } //
 func (pt *Tree) Size() int64                    { return pt.info.Size }
 func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
-		// TODO(b5): finish
+		Cid:      pt.cid,
+		Previous: prevCID(pt.fs, pt.ratchet, pt.info.Bnf),
+		Metadata: pt.info.Metadata,
+		Size:     pt.info.Size,
 	}
 }
+
 func (pt *Tree) AsLink() mdstore.Link {
 	return mdstore.Link{
 		Name:   pt.name,
@@ -587,7 +583,7 @@ func (pt *Tree) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
-	if _, err = pt.fs.PrivateStore().RatchetStore().PutRatchet(pt.fs.Context(), string(privName), pt.ratchet); err != nil {
+	if _, err = pt.fs.PrivateStore().RatchetStore().PutRatchet(pt.fs.Context(), pt.info.INum.Encode(), pt.ratchet); err != nil {
 		return nil, err
 	}
 
@@ -640,7 +636,10 @@ type FileInfo struct {
 	ContentID      cid.Cid
 }
 
-var _ fs.File = (*File)(nil)
+var (
+	_ privateNode = (*Root)(nil)
+	_ fs.File     = (*File)(nil)
+)
 
 func NewFile(fs base.PrivateMerkleDagFS, parent BareNamefilter, f fs.File) (*File, error) {
 	in := NewINumber()
@@ -700,10 +699,18 @@ func LoadFileFromCID(fs base.PrivateMerkleDagFS, name string, key Key, id cid.Ci
 	}, nil
 }
 
+func (pf *File) Ratchet() *ratchet.Spiral       { return pf.ratchet }
 func (pf *File) BareNamefilter() BareNamefilter { return pf.info.BareNamefilter }
 func (pf *File) INumber() INumber               { return pf.info.INumber }
 func (pf *File) Cid() cid.Cid                   { return pf.cid }
 func (pf *File) Content() cid.Cid               { return pf.info.ContentID }
+func (pf *File) PrivateName() (Name, error) {
+	knf, err := AddKey(pf.info.BareNamefilter, Key(pf.ratchet.Key()))
+	if err != nil {
+		return "", err
+	}
+	return ToName(knf)
+}
 
 func (pf *File) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
@@ -784,7 +791,7 @@ func (pf *File) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	if _, err = store.RatchetStore().PutRatchet(pf.fs.Context(), string(privName), pf.ratchet); err != nil {
+	if _, err = store.RatchetStore().PutRatchet(pf.fs.Context(), pf.info.INumber.Encode(), pf.ratchet); err != nil {
 		return PutResult{}, err
 	}
 
@@ -820,6 +827,8 @@ func NewINumber() INumber {
 	}
 	return id
 }
+
+func (n INumber) Encode() string { return base64.URLEncoding.EncodeToString(n[:]) }
 
 type PrivateLink struct {
 	mdstore.Link
@@ -887,4 +896,122 @@ func Merge(a, b *Root) (result base.MergeResult, err error) {
 	// 1. Merge root CIDs
 	// 2. Merge HAMTS
 	return base.MergeResult{}, fmt.Errorf("unfinished: private Merge")
+}
+
+type privateNode interface {
+	INumber() INumber
+	Ratchet() *ratchet.Spiral
+	BareNamefilter() BareNamefilter
+}
+
+func (r *Root) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error) {
+	n, err := r.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	pn, ok := n.(privateNode)
+	if !ok {
+		return nil, fmt.Errorf("child of private tree is not a private node")
+	}
+
+	bnf := pn.BareNamefilter()
+	old, err := r.fs.PrivateStore().RatchetStore().OldestKnownRatchet(r.fs.Context(), pn.INumber().Encode())
+	if err != nil {
+		return nil, err
+	}
+	if old == nil {
+		return nil, err
+	}
+
+	recent := pn.Ratchet()
+	ratchets, err := recent.Previous(old, maxRevs)
+	if err != nil {
+		return nil, err
+	}
+	ratchets = append([]*ratchet.Spiral{recent}, ratchets...) // add current revision to top of stack
+
+	log.Debugw("History", "path", path.String(), "len(ratchets)", len(ratchets), "oldest_ratchet", old.Encode())
+
+	hist := make([]base.HistoryEntry, len(ratchets))
+	for i, rcht := range ratchets {
+		key := Key(rcht.Key())
+		knf, err := AddKey(bnf, key)
+		if err != nil {
+			return nil, err
+		}
+		pn, err := ToName(knf)
+		if err != nil {
+			return nil, err
+		}
+		contentID, err := cidFromPrivateName(r.fs, pn)
+		if err != nil {
+			log.Debugf("getting CID from private name: %s", err)
+			return nil, err
+		}
+
+		f, err := r.fs.PrivateStore().GetEncryptedFile(contentID, key[:])
+		if err != nil {
+			log.Debugw("LoadTree", "err", err)
+			return nil, err
+		}
+		defer f.Close()
+
+		// TODO(b5): using TreeInfo for both files & directories
+		info := TreeInfo{}
+		if err := cbor.NewDecoder(f).Decode(&info); err != nil {
+			log.Debugw("LoadTree", "err", err)
+			return nil, err
+		}
+
+		hist[i] = base.HistoryEntry{
+			Cid:      contentID,
+			Metadata: info.Metadata,
+			Size:     info.Size,
+		}
+	}
+
+	return hist, nil
+}
+
+func prevCID(s base.PrivateMerkleDagFS, r *ratchet.Spiral, name BareNamefilter) *cid.Cid {
+	old, err := s.PrivateStore().RatchetStore().OldestKnownRatchet(s.Context(), string(name))
+	if err != nil {
+		return nil
+	}
+	if old == nil {
+		return nil
+	}
+
+	prevRatchet, err := r.Previous(old, 1)
+	if err != nil {
+		return nil
+	}
+	knf, err := AddKey(name, Key(prevRatchet[0].Key()))
+	if err != nil {
+		return nil
+	}
+	pn, err := ToName(knf)
+	if err != nil {
+		return nil
+	}
+	prevCid, err := cidFromPrivateName(s, pn)
+	if err != nil {
+		panic(err)
+	}
+	return &prevCid
+}
+
+func cidFromPrivateName(fs base.PrivateMerkleDagFS, pn Name) (id cid.Cid, err error) {
+	exists, data, err := fs.HAMT().FindRaw(fs.Context(), string(pn))
+	if err != nil {
+		return id, err
+	}
+	if !exists {
+		return id, base.ErrNotFound
+	}
+
+	// TODO(b5): lol wtf just plugged this 2 byte prefix strip in & CID parsing works,
+	// figure out the proper way to decode cids out of the HAMT
+	_, id, err = cid.CidFromBytes(data[2:])
+	return id, err
 }

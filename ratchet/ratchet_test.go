@@ -156,6 +156,50 @@ func TestRatchetEqual(t *testing.T) {
 	}
 }
 
+func TestRatchetPrevious(t *testing.T) {
+	increments := []int{
+		1,
+		2,
+		2000,
+		20000,
+		300000,
+	}
+
+	for _, incBy := range increments {
+		t.Run(fmt.Sprintf("incBy_%d", incBy), func(t *testing.T) {
+			old := new(Spiral)
+			*old = zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+
+			recent := old.Copy()
+			recent.IncBy(incBy)
+
+			limit := 5
+			if incBy < limit {
+				limit = incBy
+			}
+
+			expect := make([]*Spiral, 0, limit)
+			rev := old.Copy()
+			rev.IncBy(incBy - limit - 1) // fast forward past any elided history
+
+			i := 0
+			// handle case where history will include original "old" ratchet
+			if limit < 255 && incBy < 255 {
+				expect = append(expect, rev.Copy())
+				i++
+			}
+			for ; i < limit; i++ {
+				rev.Inc()
+				expect = append([]*Spiral{rev.Copy()}, expect...)
+			}
+
+			got, err := recent.Previous(old, 5)
+			require.Nil(t, err)
+			assert.Equal(t, expect, got)
+		})
+	}
+}
+
 func TestCompliment(t *testing.T) {
 	zeros := [32]byte{}
 	ones := bytes.Repeat([]byte{255}, 32)

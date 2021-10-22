@@ -12,10 +12,15 @@ import (
 
 var log = golog.Logger("wnfs")
 
-// Flag the encoding. The default encoding is:
-// * base64URL-unpadded (signified with u)
-// * SHA-256 (0x16: "F" in base64URL)
-const ratchetSignifier = "uF"
+const (
+	// Flag the encoding. The default encoding is:
+	// * base64URL-unpadded (signified with u)
+	// * SHA-256 (0x16: "F" in base64URL)
+	ratchetSignifier = "uF"
+	// number of iterations a previous search can use before ratchets are
+	// considered unrelated
+	defaultPrevBudget = 1000000
+)
 
 type Spiral struct {
 	large         [32]byte
@@ -194,6 +199,57 @@ func (r Spiral) Equal(b Spiral) bool {
 		r.medium == b.medium &&
 		r.mediumCounter == b.mediumCounter &&
 		r.large == b.large
+}
+
+func (r Spiral) Previous(old *Spiral, limit int) ([]*Spiral, error) {
+	return r.PreviousBudget(old, defaultPrevBudget, limit)
+}
+
+func (r Spiral) PreviousBudget(old *Spiral, discrepencyBudget, limit int) ([]*Spiral, error) {
+	if r.Equal(*old) {
+		log.Debug("calculating previous, ratchets are equal")
+		return nil, nil
+	}
+	return previousHelper(r.Copy(), old, discrepencyBudget, limit)
+}
+
+// TODO(b5): this won't work for histories that span past the small ratchet!
+func previousHelper(recent, old *Spiral, discrepencyBudget, limit int) ([]*Spiral, error) {
+	if discrepencyBudget < 0 {
+		return nil, fmt.Errorf("exhausted ratchet discrepency budget")
+	}
+
+	oldNextLarge, oldNextLargeStepsDone := nextLargeEpoch(*old)
+
+	if recent.large == old.large || recent.large == oldNextLarge.large {
+		oldNextMedium, oldNextMediumStepsDone := nextMediumEpoch(*old)
+
+		if recent.medium == old.medium || recent.medium == oldNextMedium.medium {
+			// break out of the recursive pattern at this point because discrepency is
+			// within the small ratchet. working sequentially is faster
+			revision := old.Copy()
+			next := old.Copy()
+			revisions := []*Spiral{old}
+			next.Inc()
+			for !next.Equal(*recent) {
+				revision.Inc()
+				next.Inc()
+
+				if len(revisions) == limit && limit > 0 {
+					// shift all elements by one, keeping slice the same length
+					revisions = append([]*Spiral{revision.Copy()}, revisions[:len(revisions)-1]...)
+				} else {
+					// push to front
+					revisions = append([]*Spiral{revision.Copy()}, revisions...)
+				}
+			}
+			return revisions, nil
+		}
+
+		return previousHelper(recent, &oldNextMedium, discrepencyBudget-oldNextMediumStepsDone, limit)
+	}
+
+	return previousHelper(recent, &oldNextLarge, discrepencyBudget-oldNextLargeStepsDone, limit)
 }
 
 func (r Spiral) combinedCounter() int {
