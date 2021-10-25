@@ -419,6 +419,61 @@ func (t *PublicTree) writeHeader(ctx context.Context, links mdstore.Links) (base
 	}, nil
 }
 
+func (t *PublicTree) History(path base.Path, max int) ([]base.HistoryEntry, error) {
+	f, err := t.Get(path)
+	if err != nil {
+		return nil, err
+	}
+
+	n, ok := f.(base.Node)
+	if !ok {
+		return nil, fmt.Errorf("%s does not support history", path)
+	}
+
+	ctx := t.fs.Context()
+	store := t.fs.DagStore()
+
+	log := []base.HistoryEntry{
+		n.AsHistoryEntry(),
+	}
+
+	prev := log[0].Previous
+	for prev != nil {
+		ent, err := loadHistoryEntry(ctx, store, *prev)
+		if err != nil {
+			return nil, err
+		}
+		log = append(log, ent)
+		prev = ent.Previous
+
+		if len(log) == max {
+			break
+		}
+	}
+
+	return log, nil
+}
+
+func loadHistoryEntry(ctx context.Context, store mdstore.MerkleDagStore, id cid.Cid) (base.HistoryEntry, error) {
+	node, err := store.GetNode(ctx, id)
+	if err != nil {
+		return base.HistoryEntry{}, err
+	}
+
+	links := node.Links()
+	ent := base.HistoryEntry{
+		Cid:  id,
+		Size: node.Size(),
+	}
+	if mdLnk := links.Get(base.MetadataLinkName); mdLnk != nil {
+		ent.Metadata, err = base.LoadMetadata(ctx, store, mdLnk.Cid)
+	}
+	if prvLnk := links.Get(base.PreviousLinkName); prvLnk != nil {
+		ent.Previous = &prvLnk.Cid
+	}
+	return ent, err
+}
+
 func (t *PublicTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
 	switch x := n.(type) {
 	case *PublicTree:

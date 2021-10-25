@@ -15,6 +15,7 @@ import (
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 var testRootKey Key = [32]byte{
@@ -36,8 +37,9 @@ func TestPublicWNFS(t *testing.T) {
 
 	t.Run("writes_files", func(t *testing.T) {
 		store := newMemTestStore(ctx, t)
+		rs := ratchet.NewMemStore(ctx)
 
-		fsys, err := NewEmptyFS(ctx, store, testRootKey)
+		fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,9 +119,10 @@ func BenchmarkPublicCat10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,9 +148,10 @@ func BenchmarkPublicWrite10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,9 +174,10 @@ func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,9 +203,10 @@ func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,9 +229,10 @@ func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,9 +273,10 @@ func TestWNFSPrivate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +362,7 @@ func TestWNFSPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fsys, err = FromCID(ctx2, store, rootCid, key, pn)
+	fsys, err = FromCID(ctx2, store, rs, rootCid, key, pn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,9 +380,10 @@ func BenchmarkPrivateCat10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,9 +409,10 @@ func BenchmarkPrivateWrite10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,9 +435,10 @@ func BenchmarkPrivateCat10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,9 +464,10 @@ func BenchmarkPrivateWrite10MbFileSubdir(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,9 +490,10 @@ func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +547,8 @@ func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
 
 func newMemTestPrivateStore(ctx context.Context, f fataler) mdstore.PrivateStore {
 	f.Helper()
-	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice())
+	rs := ratchet.NewMemStore(ctx)
+	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice(), rs)
 	if err != nil {
 		f.Fatal(err)
 	}

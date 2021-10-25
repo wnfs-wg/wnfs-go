@@ -1,12 +1,15 @@
-package private
+package ratchet
 
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	fuzz "github.com/google/gofuzz"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRatchet(t *testing.T) {
@@ -62,7 +65,7 @@ func TestFuzzRatchet(t *testing.T) {
 			continue // this test cannot test inc by zero
 		}
 		t.Logf("testing %d increments", n)
-		slow := NewSpiralRatchet()
+		slow := NewSpiral()
 		fast := slow.Copy()
 
 		for i := 0; i < int(n); i++ {
@@ -93,12 +96,108 @@ func TestRatchetCoding(t *testing.T) {
 	a := zero(seed)
 	encoded := a.Encode()
 
-	b, err := DecodeRatchet(encoded)
+	b, err := DecodeSpiral(encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	assertRatchetsEqual(t, &a, b)
+}
+
+func TestRatchetCompare(t *testing.T) {
+	one := new(Spiral)
+	*one = zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+	two := one.Copy()
+	two.Inc()
+	twentyFiveThousand := one.Copy()
+	twentyFiveThousand.IncBy(25000)
+
+	oneHunderdThousand := one.Copy()
+	oneHunderdThousand.IncBy(100000)
+
+	cases := []struct {
+		a, b             *Spiral
+		maxSteps, expect int
+	}{
+		{a: one, b: one, maxSteps: 0, expect: 0},
+		{a: one, b: two, maxSteps: 1, expect: -1},
+		{a: two, b: one, maxSteps: 1, expect: 1},
+		{a: two, b: one, maxSteps: 1, expect: 1},
+		{a: twentyFiveThousand, b: one, maxSteps: 10, expect: 25000},
+		{a: one, b: oneHunderdThousand, maxSteps: 10, expect: -100000},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("case_%d", i), func(t *testing.T) {
+			got, err := c.a.Compare(*c.b, 1)
+			require.Nil(t, err)
+			assert.Equal(t, c.expect, got)
+		})
+	}
+
+	unrelated := new(Spiral)
+	*unrelated = zero(shasumFromHex("500b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+
+	_, err := one.Compare(*unrelated, 100000)
+	assert.ErrorIs(t, err, ErrUnknownRatchetRelation)
+}
+
+func TestRatchetEqual(t *testing.T) {
+	a := zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+	b := zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+	c := zero(shasumFromHex("0000000000000000000000000000000000000000000000000000000000000000"))
+
+	if !a.Equal(b) {
+		t.Errorf("unexpected inequality. a: %q b: %q", a, b)
+	}
+
+	if b.Equal(c) {
+		t.Errorf("unexpected equality: a: %q b:%q", a, b)
+	}
+}
+
+func TestRatchetPrevious(t *testing.T) {
+	increments := []int{
+		1,
+		2,
+		2000,
+		20000,
+		300000,
+	}
+
+	for _, incBy := range increments {
+		t.Run(fmt.Sprintf("incBy_%d", incBy), func(t *testing.T) {
+			old := new(Spiral)
+			*old = zero(shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33"))
+
+			recent := old.Copy()
+			recent.IncBy(incBy)
+
+			limit := 5
+			if incBy < limit {
+				limit = incBy
+			}
+
+			expect := make([]*Spiral, 0, limit)
+			rev := old.Copy()
+			rev.IncBy(incBy - limit - 1) // fast forward past any elided history
+
+			i := 0
+			// handle case where history will include original "old" ratchet
+			if limit < 255 && incBy < 255 {
+				expect = append(expect, rev.Copy())
+				i++
+			}
+			for ; i < limit; i++ {
+				rev.Inc()
+				expect = append([]*Spiral{rev.Copy()}, expect...)
+			}
+
+			got, err := recent.Previous(old, 5)
+			require.Nil(t, err)
+			assert.Equal(t, expect, got)
+		})
+	}
 }
 
 func TestCompliment(t *testing.T) {
@@ -127,14 +226,14 @@ func TestXOR(t *testing.T) {
 	}
 }
 
-func assertRatchetsEqual(t *testing.T, a, b *SpiralRatchet) {
+func assertRatchetsEqual(t *testing.T, a, b *Spiral) {
 	t.Helper()
 	if diff := cmp.Diff(hexMap(a), hexMap(b)); diff != "" {
 		t.Errorf("ratchet mismatch (-a +b):\n%s", diff)
 	}
 }
 
-func assertRatchet(t *testing.T, r *SpiralRatchet, expect map[string]string) {
+func assertRatchet(t *testing.T, r *Spiral, expect map[string]string) {
 	t.Helper()
 	got := hexMap(r)
 	if diff := cmp.Diff(expect, got); diff != "" {
@@ -154,7 +253,7 @@ func shasumFromHex(s string) [32]byte {
 	return res
 }
 
-func hexMap(r *SpiralRatchet) map[string]string {
+func hexMap(r *Spiral) map[string]string {
 	return map[string]string{
 		"large":        hex.EncodeToString(r.large[:]),
 		"medium":       hex.EncodeToString(r.medium[:]),
@@ -176,7 +275,7 @@ func BenchmarkRatchetAdd256(b *testing.B) {
 
 func BenchmarkRatchetDeserializeAdd1(b *testing.B) {
 	seed := shasumFromHex("600b56e66b7d12e08fd58544d7c811db0063d7aa467a1f6be39990fed0ca5b33")
-	var r *SpiralRatchet
+	var r *Spiral
 	*r = zero(seed)
 	// advance ratchet a bunch
 	for i := 0; i < 125; i++ {
@@ -186,13 +285,13 @@ func BenchmarkRatchetDeserializeAdd1(b *testing.B) {
 	enc := r.Encode()
 
 	// confirm ratchet will decode
-	if _, err := DecodeRatchet(enc); err != nil {
+	if _, err := DecodeSpiral(enc); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		r, _ = DecodeRatchet(enc)
+		r, _ = DecodeSpiral(enc)
 		r.Inc()
 	}
 }

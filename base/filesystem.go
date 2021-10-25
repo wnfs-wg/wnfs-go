@@ -56,6 +56,8 @@ type Tree interface {
 	Copy(path Path, srcPath string, src fs.FS) (PutResult, error)
 	Rm(path Path) (PutResult, error)
 	Mkdir(path Path) (PutResult, error)
+
+	History(path Path, limit int) ([]HistoryEntry, error)
 }
 
 type PutResult interface {
@@ -78,6 +80,13 @@ type TreeHeader interface {
 type Info interface {
 	Header
 	Userland() cid.Cid
+}
+
+type HistoryEntry struct {
+	Cid      cid.Cid   `json:"cid"`
+	Previous *cid.Cid  `json:"previous"`
+	Metadata *Metadata `json:"metadata"`
+	Size     int64     `json:"size"`
 }
 
 func Filename(file fs.File) (string, error) {

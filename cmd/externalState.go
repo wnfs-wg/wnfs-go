@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -10,6 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/mitchellh/go-homedir"
 	"github.com/qri-io/wnfs-go"
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 const stateFilename = "wnfs-go.json"
@@ -40,19 +42,26 @@ func configDirPath() (string, error) {
 }
 
 type ExternalState struct {
-	path            string
+	path string
+	rs   ratchet.Store
+
 	RootCID         cid.Cid
 	RootKey         wnfs.Key
 	PrivateRootName wnfs.PrivateName
 }
 
-func LoadOrCreateExternalState(path string) (*ExternalState, error) {
+func LoadOrCreateExternalState(ctx context.Context, path string) (*ExternalState, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("creating external state file: %q\n", path)
+			rs, err := ratchet.NewStore(ctx, filepath.Join(filepath.Dir(path), "ratchets.json"))
+			if err != nil {
+				return nil, err
+			}
 			s := &ExternalState{
 				path:    path,
+				rs:      rs,
 				RootKey: wnfs.NewKey(),
 			}
 			err = s.Write()
@@ -66,6 +75,10 @@ func LoadOrCreateExternalState(path string) (*ExternalState, error) {
 		return nil, err
 	}
 	s.path = path
+	if s.rs, err = ratchet.NewStore(ctx, filepath.Join(filepath.Dir(path), "ratchets.json")); err != nil {
+		return nil, err
+	}
+
 	// construct a key if one doesn't exist
 	if s.RootKey.IsEmpty() {
 		fmt.Println("creating new root key")
@@ -73,6 +86,10 @@ func LoadOrCreateExternalState(path string) (*ExternalState, error) {
 		return s, s.Write()
 	}
 	return s, nil
+}
+
+func (s *ExternalState) RatchetStore() ratchet.Store {
+	return s.rs
 }
 
 func (s *ExternalState) Write() error {

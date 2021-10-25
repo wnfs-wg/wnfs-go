@@ -3,12 +3,14 @@ package private
 import (
 	"encoding/base64"
 	"encoding/json"
+
+	"github.com/qri-io/wnfs-go/ratchet"
 )
 
 type Key [32]byte
 
 func NewKey() Key {
-	return NewSpiralRatchet().Key()
+	return ratchet.NewSpiral().Key()
 }
 
 func (k Key) Encode() string { return base64.URLEncoding.EncodeToString(k[:]) }
