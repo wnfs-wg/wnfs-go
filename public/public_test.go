@@ -93,27 +93,19 @@ func TestHistory(t *testing.T) {
 	_, err = tree.Add(base.MustPath("dir/bonjour.txt"), base.NewMemfileBytes("bonjour.txt", []byte("bonjour!")))
 	require.Nil(t, err)
 
-	hist := mustHistCids(t, tree)
+	hist := mustHistCids(t, tree, base.Path{})
 	assert.Equal(t, 6, len(hist))
 
-	salut, err := tree.Get(base.Path{"salut.txt"})
-	require.Nil(t, err)
-	hist = mustHistCidsFile(t, salut.(*PublicFile))
+	hist = mustHistCids(t, tree, base.MustPath("salut.txt"))
 	assert.Equal(t, 2, len(hist))
 
-	dir, err := tree.Get(base.Path{"dir"})
-	require.Nil(t, err)
-	hist = mustHistCids(t, dir.(*PublicTree))
+	hist = mustHistCids(t, tree, base.Path{"dir"})
 	assert.Equal(t, 3, len(hist))
 
-	goodbye, err := tree.Get(base.Path{"dir", "goodbye.txt"})
-	require.Nil(t, err)
-	hist = mustHistCidsFile(t, goodbye.(*PublicFile))
+	hist = mustHistCids(t, tree, base.Path{"dir", "goodbye.txt"})
 	assert.Equal(t, 2, len(hist))
 
-	bonjour, err := tree.Get(base.Path{"dir", "bonjour.txt"})
-	require.Nil(t, err)
-	hist = mustHistCidsFile(t, bonjour.(*PublicFile))
+	hist = mustHistCids(t, tree, base.Path{"dir", "bonjour.txt"})
 	assert.Equal(t, 1, len(hist))
 }
 
@@ -399,9 +391,9 @@ func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
 	return store
 }
 
-func mustHistCids(t *testing.T, tree *PublicTree) []cid.Cid {
+func mustHistCids(t *testing.T, tree *PublicTree, path base.Path) []cid.Cid {
 	t.Helper()
-	log, err := base.History(context.Background(), tree.fs.DagStore(), tree, -1)
+	log, err := tree.History(path, -1)
 	require.Nil(t, err)
 	ids := make([]cid.Cid, len(log))
 	for i, l := range log {
@@ -410,18 +402,18 @@ func mustHistCids(t *testing.T, tree *PublicTree) []cid.Cid {
 	return ids
 }
 
-// TODO(b5): base.Node interface needs work, this and mustHistCids should be one
-// function
-func mustHistCidsFile(t *testing.T, f *PublicFile) []cid.Cid {
-	t.Helper()
-	log, err := base.History(context.Background(), f.fs.DagStore(), f, -1)
-	require.Nil(t, err)
-	ids := make([]cid.Cid, len(log))
-	for i, l := range log {
-		ids[i] = l.Cid
-	}
-	return ids
-}
+// // TODO(b5): base.Node interface needs work, this and mustHistCids should be one
+// // function
+// func mustHistCidsFile(t *testing.T, root *PublicTree, path base.Path) []cid.Cid {
+// 	t.Helper()
+// 	log, err := root.History(path, -1)
+// 	require.Nil(t, err)
+// 	ids := make([]cid.Cid, len(log))
+// 	for i, l := range log {
+// 		ids[i] = l.Cid
+// 	}
+// 	return ids
+// }
 
 func mustDirChildren(t *testing.T, dir *PublicTree, ch []string) {
 	t.Helper()

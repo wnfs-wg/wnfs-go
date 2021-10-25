@@ -32,6 +32,12 @@ type FS interface {
 	PrivateName() (Name, error)
 }
 
+type privateNode interface {
+	INumber() INumber
+	Ratchet() *ratchet.Spiral
+	BareNamefilter() BareNamefilter
+}
+
 type Root struct {
 	*Tree
 	ctx         context.Context
@@ -490,6 +496,75 @@ func (pt *Tree) Mkdir(path base.Path) (res base.PutResult, err error) {
 	return pt.Put()
 }
 
+func (pt *Tree) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error) {
+	n, err := pt.Get(path)
+	if err != nil {
+		return nil, err
+	}
+	pn, ok := n.(privateNode)
+	if !ok {
+		return nil, fmt.Errorf("child of private tree is not a private node")
+	}
+
+	bnf := pn.BareNamefilter()
+	old, err := pt.fs.PrivateStore().RatchetStore().OldestKnownRatchet(pt.fs.Context(), pn.INumber().Encode())
+	if err != nil {
+		return nil, err
+	}
+	if old == nil {
+		return nil, err
+	}
+
+	recent := pn.Ratchet()
+	ratchets, err := recent.Previous(old, maxRevs)
+	if err != nil {
+		return nil, err
+	}
+	ratchets = append([]*ratchet.Spiral{recent}, ratchets...) // add current revision to top of stack
+
+	log.Debugw("History", "path", path.String(), "len(ratchets)", len(ratchets), "oldest_ratchet", old.Encode())
+
+	hist := make([]base.HistoryEntry, len(ratchets))
+	for i, rcht := range ratchets {
+		key := Key(rcht.Key())
+		knf, err := AddKey(bnf, key)
+		if err != nil {
+			return nil, err
+		}
+		pn, err := ToName(knf)
+		if err != nil {
+			return nil, err
+		}
+		contentID, err := cidFromPrivateName(pt.fs, pn)
+		if err != nil {
+			log.Debugf("getting CID from private name: %s", err)
+			return nil, err
+		}
+
+		f, err := pt.fs.PrivateStore().GetEncryptedFile(contentID, key[:])
+		if err != nil {
+			log.Debugw("LoadTree", "err", err)
+			return nil, err
+		}
+		defer f.Close()
+
+		// TODO(b5): using TreeInfo for both files & directories
+		info := TreeInfo{}
+		if err := cbor.NewDecoder(f).Decode(&info); err != nil {
+			log.Debugw("LoadTree", "err", err)
+			return nil, err
+		}
+
+		hist[i] = base.HistoryEntry{
+			Cid:      contentID,
+			Metadata: info.Metadata,
+			Size:     info.Size,
+		}
+	}
+
+	return hist, nil
+}
+
 func (pt *Tree) getOrCreateDirectChildTree(name string) (*Tree, error) {
 	link := pt.info.Links.Get(name)
 	if link == nil {
@@ -896,81 +971,6 @@ func Merge(a, b *Root) (result base.MergeResult, err error) {
 	// 1. Merge root CIDs
 	// 2. Merge HAMTS
 	return base.MergeResult{}, fmt.Errorf("unfinished: private Merge")
-}
-
-type privateNode interface {
-	INumber() INumber
-	Ratchet() *ratchet.Spiral
-	BareNamefilter() BareNamefilter
-}
-
-func (r *Root) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error) {
-	n, err := r.Get(path)
-	if err != nil {
-		return nil, err
-	}
-	pn, ok := n.(privateNode)
-	if !ok {
-		return nil, fmt.Errorf("child of private tree is not a private node")
-	}
-
-	bnf := pn.BareNamefilter()
-	old, err := r.fs.PrivateStore().RatchetStore().OldestKnownRatchet(r.fs.Context(), pn.INumber().Encode())
-	if err != nil {
-		return nil, err
-	}
-	if old == nil {
-		return nil, err
-	}
-
-	recent := pn.Ratchet()
-	ratchets, err := recent.Previous(old, maxRevs)
-	if err != nil {
-		return nil, err
-	}
-	ratchets = append([]*ratchet.Spiral{recent}, ratchets...) // add current revision to top of stack
-
-	log.Debugw("History", "path", path.String(), "len(ratchets)", len(ratchets), "oldest_ratchet", old.Encode())
-
-	hist := make([]base.HistoryEntry, len(ratchets))
-	for i, rcht := range ratchets {
-		key := Key(rcht.Key())
-		knf, err := AddKey(bnf, key)
-		if err != nil {
-			return nil, err
-		}
-		pn, err := ToName(knf)
-		if err != nil {
-			return nil, err
-		}
-		contentID, err := cidFromPrivateName(r.fs, pn)
-		if err != nil {
-			log.Debugf("getting CID from private name: %s", err)
-			return nil, err
-		}
-
-		f, err := r.fs.PrivateStore().GetEncryptedFile(contentID, key[:])
-		if err != nil {
-			log.Debugw("LoadTree", "err", err)
-			return nil, err
-		}
-		defer f.Close()
-
-		// TODO(b5): using TreeInfo for both files & directories
-		info := TreeInfo{}
-		if err := cbor.NewDecoder(f).Decode(&info); err != nil {
-			log.Debugw("LoadTree", "err", err)
-			return nil, err
-		}
-
-		hist[i] = base.HistoryEntry{
-			Cid:      contentID,
-			Metadata: info.Metadata,
-			Size:     info.Size,
-		}
-	}
-
-	return hist, nil
 }
 
 func prevCID(s base.PrivateMerkleDagFS, r *ratchet.Spiral, name BareNamefilter) *cid.Cid {

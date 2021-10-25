@@ -333,21 +333,7 @@ func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error)
 		return nil, err
 	}
 
-	if pr, ok := node.(*private.Root); ok {
-		return pr.History(relPath, max)
-	}
-
-	f, err := node.Get(relPath)
-	if err != nil {
-		return nil, err
-	}
-
-	fileNode, ok := f.(base.Node)
-	if !ok {
-		return nil, fmt.Errorf("node at %s doesn't support history", pathStr)
-	}
-
-	return base.History(fsys.ctx, fsys.store, fileNode, max)
+	return node.History(relPath, max)
 }
 
 func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree, relPath base.Path, err error) {
