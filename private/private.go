@@ -22,6 +22,7 @@ import (
 	"github.com/qri-io/wnfs-go/mdstore"
 	"github.com/qri-io/wnfs-go/public"
 	"github.com/qri-io/wnfs-go/ratchet"
+	cbg "github.com/whyrusleeping/cbor-gen"
 )
 
 var log = golog.Logger("wnfs")
@@ -184,10 +185,6 @@ func (r *Root) putRoot() error {
 		r.hamtRootCID = &id
 	}
 	return r.store.RatchetStore().Flush()
-}
-
-func (r *Root) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
-	return result, fmt.Errorf("unfinished: private.Root.MergeDiverged")
 }
 
 type TreeInfo struct {
@@ -690,7 +687,92 @@ func (pt *Tree) removeUserlandLink(name string) {
 }
 
 func (pt *Tree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
-	return result, fmt.Errorf("unfinished: private.Tree.MergeDiverged")
+	switch x := n.(type) {
+	case *Tree:
+		log.Debugw("merge trees", "local", pt.cid, "remote", x.cid)
+		return pt.mergeDivergedTree(x)
+	case *File:
+		result.Type = base.MTMergeCommit
+		// TODO(b5): should we support this?
+		// nHist := n.AsHistoryEntry()
+		// pt.merge = &nHist.Cid
+		pt.info.Metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+		update, err := pt.Put()
+		if err != nil {
+			return result, err
+		}
+
+		si := update.ToSkeletonInfo()
+		return base.MergeResult{
+			Type:     base.MTMergeCommit,
+			Cid:      si.Cid,
+			Userland: si.Cid,
+			Metadata: si.Metadata,
+			Size:     update.ToLink("").Size,
+			IsFile:   true,
+		}, nil
+	default:
+		return result, fmt.Errorf("cannot merge node of type %T onto public directory", n)
+	}
+}
+
+func (pt *Tree) mergeDivergedTree(remote *Tree) (res base.MergeResult, err error) {
+	return res, fmt.Errorf("unfinished: merge diverged tree")
+
+	// for remName, remInfo := range remote.skeleton {
+	// 	localInfo, existsLocally := t.skeleton[remName]
+
+	// 	if !existsLocally {
+	// 		// remote has a file local is missing, add it.
+	// 		n, err := loadNodeFromSkeletonInfo(remote.fs, remName, remInfo)
+	// 		if err != nil {
+	// 			return res, err
+	// 		}
+
+	// 		t.skeleton[remName] = remInfo
+	// 		t.userland.Add(n.AsLink())
+	// 		continue
+	// 	}
+
+	// 	if localInfo.Cid.Equals(remInfo.Cid) {
+	// 		// both files are equal. no need to merge
+	// 		continue
+	// 	}
+
+	// 	// node exists in both trees & CIDs are inequal. merge recursively
+	// 	lcl, err := loadNodeFromSkeletonInfo(t.fs, remName, localInfo)
+	// 	if err != nil {
+	// 		return res, err
+	// 	}
+	// 	rem, err := loadNodeFromSkeletonInfo(remote.fs, remName, remInfo)
+	// 	if err != nil {
+	// 		return res, err
+	// 	}
+
+	// 	res, err := Merge(lcl, rem)
+	// 	if err != nil {
+	// 		return res, err
+	// 	}
+	// 	t.skeleton[remName] = res.ToSkeletonInfo()
+	// 	t.userland.Add(res.ToLink(remName))
+	// }
+
+	// t.merge = &remote.cid
+	// t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	// update, err := t.Put()
+	// if err != nil {
+	// 	return res, err
+	// }
+
+	// si := update.ToSkeletonInfo()
+	// return base.MergeResult{
+	// 	Type:     base.MTMergeCommit,
+	// 	Cid:      si.Cid,
+	// 	Userland: si.Cid,
+	// 	Metadata: si.Metadata,
+	// 	Size:     update.ToLink("").Size,
+	// 	IsFile:   false,
+	// }, nil
 }
 
 type File struct {
@@ -831,6 +913,40 @@ func (pf *File) SetContents(f fs.File) {
 	pf.content = f
 }
 
+// TODO(b5): this *might* not be necessary. need to test with remote node merge
+func (pf *File) ensureContent() (err error) {
+	if pf.content == nil {
+		key := pf.ratchet.Key()
+		pf.content, err = pf.fs.PrivateStore().GetEncryptedFile(pf.cid, key[:])
+	}
+	return err
+}
+
+func (pf *File) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
+	result.Type = base.MTMergeCommit
+	// bHist := b.AsHistoryEntry()
+	// f.merge = &bHist.Cid
+	pf.info.Metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	if err := pf.ensureContent(); err != nil {
+		return result, err
+	}
+
+	update, err := pf.Put()
+	if err != nil {
+		return result, err
+	}
+
+	si := update.ToSkeletonInfo()
+	return base.MergeResult{
+		Type:     base.MTMergeCommit,
+		Cid:      si.Cid,
+		Userland: si.Cid,
+		Metadata: si.Metadata,
+		Size:     update.ToLink("").Size,
+		IsFile:   true,
+	}, nil
+}
+
 func (pf *File) Put() (PutResult, error) {
 	store := pf.fs.PrivateStore()
 
@@ -967,11 +1083,131 @@ func (r PutResult) ToPrivateLink(name string) PrivateLink {
 	}
 }
 
-func Merge(a, b *Root) (result base.MergeResult, err error) {
-	// 1. Merge root CIDs
-	// 2. Merge HAMTS
-	return base.MergeResult{}, fmt.Errorf("unfinished: private Merge")
+// func Merge(a, b *Root) (result base.MergeResult, err error) {
+// 	// 1. Merge root CIDs
+// 	// 2. Merge HAMTS
+// 	return base.MergeResult{}, fmt.Errorf("unfinished: private Merge")
+// }
+
+func (pt *Tree) Merge(remote base.Tree) (result base.MergeResult, err error) {
+	aLog, err := pt.History(base.Path{}, -1)
+	if err != nil {
+		return result, err
+	}
+
+	var remoteFs base.PrivateMerkleDagFS
+	switch x := remote.(type) {
+	case *Root:
+		remoteFs = x.fs
+	case *Tree:
+		remoteFs = x.fs
+	default:
+		return result, fmt.Errorf("cannot merge, remote node is not a private tree")
+	}
+
+	bLog, err := remote.History(base.Path{}, -1)
+	if err != nil {
+		if errors.Is(err, ratchet.ErrRatchetNotFound) {
+			// for now let's treat not finding the ratchet locally as no common history
+			return result, base.ErrNoCommonHistory
+		}
+		return result, err
+	}
+
+	var (
+		aGen, bGen   int
+		aHist, bHist base.HistoryEntry
+	)
+
+	for aGen, aHist = range aLog {
+		for bGen, bHist = range bLog {
+			if aHist.Cid.Equals(bHist.Cid) {
+				if aGen == 0 && bGen > 0 {
+					if err := mergeHamt(pt.fs.Context(), pt.fs.HAMT(), remoteFs.HAMT()); err != nil {
+						return result, err
+					}
+					// fast-forward
+					bHist = bLog[0]
+					return base.MergeResult{
+						Type: base.MTFastForward,
+						// TODO(b5):
+						// 	Userland: si.Cid,
+						// 	Metadata: si.Metadata,
+						Cid:    bHist.Cid,
+						Size:   bHist.Size,
+						IsFile: bHist.Metadata.IsFile,
+					}, nil
+				} else if aGen > 0 && bGen == 0 {
+					result.Type = base.MTLocalAhead
+					aHist := aLog[0]
+					return base.MergeResult{
+						Type:   base.MTLocalAhead,
+						Cid:    aHist.Cid,
+						Size:   aHist.Size,
+						IsFile: aHist.Metadata.IsFile,
+					}, nil
+				} else {
+					// both local & remote are greater than zero, have diverged
+					if err := mergeHamt(pt.fs.Context(), pt.fs.HAMT(), remoteFs.HAMT()); err != nil {
+						return result, err
+					}
+					result.Type = base.MTMergeCommit
+					if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+						return pt.MergeDiverged(remote)
+					}
+					return remote.MergeDiverged(pt)
+				}
+			}
+		}
+	}
+
+	if err := mergeHamt(pt.fs.Context(), pt.fs.HAMT(), remoteFs.HAMT()); err != nil {
+		return result, err
+	}
+	result.Type = base.MTMergeCommit
+	if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+		return pt.MergeDiverged(remote)
+	}
+	return remote.MergeDiverged(pt)
 }
+
+func mergeHamt(ctx context.Context, dst, src *hamt.Node) error {
+	return src.ForEach(ctx, func(k string, val *cbg.Deferred) error {
+		_, err := dst.SetIfAbsent(ctx, k, val)
+		return err
+	})
+}
+
+// // load a public node
+// func loadNode(fs base.MerkleDagFS, name string, id cid.Cid) (n base.Node, err error) {
+// 	ctx := fs.Context()
+// 	st := fs.DagStore()
+// 	header, err := st.GetNode(ctx, id)
+// 	if err != nil {
+// 		return n, err
+// 	}
+// 	metaLink := header.Links().Get(base.MetadataLinkName)
+// 	if metaLink == nil {
+// 		return nil, fmt.Errorf("cid %s does not point to a well-formed public header block: missing meta link", id.String())
+// 	}
+
+// 	md, err := base.LoadMetadata(ctx, st, metaLink.Cid)
+// 	if err != nil {
+// 		return n, fmt.Errorf("error loading meta at cid %s: %w", metaLink.Cid, err)
+// 	}
+// 	if md.IsFile {
+// 		return LoadFileFromCID(fs, name, id)
+// 	}
+
+// 	return LoadTreeFromCID(fs, name, id)
+// }
+
+// func loadNodeFromSkeletonInfo(fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
+// 	if info.IsFile {
+// 		return LoadFileFromCID(fs, name, info.Cid)
+// 	}
+// 	return LoadTreeFromCID(fs, name, info.Cid)
+// }
 
 func prevCID(s base.PrivateMerkleDagFS, r *ratchet.Spiral, name BareNamefilter) *cid.Cid {
 	old, err := s.PrivateStore().RatchetStore().OldestKnownRatchet(s.Context(), string(name))
