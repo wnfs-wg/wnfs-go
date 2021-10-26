@@ -66,6 +66,10 @@ func (r Spiral) Key() [32]byte {
 	return hash(v[:])
 }
 
+func (r Spiral) Summary() string {
+	return fmt.Sprintf("%x-%d:%x-%d:%x", r.large[:3], r.mediumCounter, r.medium[:3], r.smallCounter, r.small[:3])
+}
+
 func (r *Spiral) Copy() *Spiral {
 	return &Spiral{
 		large:         r.large,
@@ -201,6 +205,15 @@ func (r Spiral) Equal(b Spiral) bool {
 		r.large == b.large
 }
 
+// KnownAfter is probabilistic. Returns true if r is known to be after b, and
+// false if large counters are inequal (meaning r is before, equal, unrelated,
+// or after)
+func (r Spiral) KnownAfter(b Spiral) bool {
+	return r.large == b.large &&
+		r.mediumCounter > b.mediumCounter &&
+		r.smallCounter > b.smallCounter
+}
+
 func (r Spiral) Previous(old *Spiral, limit int) ([]*Spiral, error) {
 	return r.PreviousBudget(old, defaultPrevBudget, limit)
 }
@@ -209,7 +222,10 @@ func (r Spiral) PreviousBudget(old *Spiral, discrepencyBudget, limit int) ([]*Sp
 	if r.Equal(*old) {
 		log.Debug("calculating previous, ratchets are equal")
 		return nil, nil
+	} else if r.KnownAfter(*old) {
+		return nil, fmt.Errorf("ratchet is before old")
 	}
+	log.Debugw("ratchet history", "recent", r.Summary(), "old", old.Summary())
 	return previousHelper(r.Copy(), old, discrepencyBudget, limit)
 }
 

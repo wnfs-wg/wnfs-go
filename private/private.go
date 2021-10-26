@@ -506,15 +506,18 @@ func (pt *Tree) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error
 	bnf := pn.BareNamefilter()
 	old, err := pt.fs.PrivateStore().RatchetStore().OldestKnownRatchet(pt.fs.Context(), pn.INumber().Encode())
 	if err != nil {
+		log.Debugw("getting oldest known ratchet", "err", err)
 		return nil, err
 	}
 	if old == nil {
+		log.Debugw("getting oldest known ratchet", "err", err)
 		return nil, err
 	}
 
 	recent := pn.Ratchet()
 	ratchets, err := recent.Previous(old, maxRevs)
 	if err != nil {
+		log.Debugw("history previous revs", "err", err)
 		return nil, err
 	}
 	ratchets = append([]*ratchet.Spiral{recent}, ratchets...) // add current revision to top of stack
@@ -534,7 +537,7 @@ func (pt *Tree) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error
 		}
 		contentID, err := cidFromPrivateName(pt.fs, pn)
 		if err != nil {
-			log.Debugf("getting CID from private name: %s", err)
+			log.Debugw("getting CID from private name", "err", err)
 			return nil, err
 		}
 
@@ -559,6 +562,7 @@ func (pt *Tree) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error
 		}
 	}
 
+	log.Debugw("found history", "len(hist)", len(hist))
 	return hist, nil
 }
 
@@ -1070,7 +1074,6 @@ func (pls PrivateLinks) SizeSum() (total int64) {
 
 type PutResult struct {
 	public.PutResult
-
 	Key     Key
 	Pointer Name
 }
@@ -1083,131 +1086,123 @@ func (r PutResult) ToPrivateLink(name string) PrivateLink {
 	}
 }
 
-// func Merge(a, b *Root) (result base.MergeResult, err error) {
-// 	// 1. Merge root CIDs
-// 	// 2. Merge HAMTS
-// 	return base.MergeResult{}, fmt.Errorf("unfinished: private Merge")
-// }
-
 func (pt *Tree) Merge(remote base.Tree) (result base.MergeResult, err error) {
-	aLog, err := pt.History(base.Path{}, -1)
-	if err != nil {
-		return result, err
-	}
+	var (
+		remoteRatchet     ratchet.Spiral
+		remoteCid         cid.Cid
+		remotePrivateName Name
+		remoteFs          base.PrivateMerkleDagFS
+	)
 
-	var remoteFs base.PrivateMerkleDagFS
+	// TODO(b5): factor a "private tree" interface that provides these values &
+	// use an interface assertion. switching on root & tree below is silly
 	switch x := remote.(type) {
 	case *Root:
 		remoteFs = x.fs
+		remoteRatchet = *x.ratchet
+		remoteCid = x.cid
+		if remotePrivateName, err = x.PrivateName(); err != nil {
+			return result, err
+		}
 	case *Tree:
 		remoteFs = x.fs
+		remoteRatchet = *x.ratchet
+		remoteCid = x.cid
+		if remotePrivateName, err = x.PrivateName(); err != nil {
+			return result, err
+		}
 	default:
 		return result, fmt.Errorf("cannot merge, remote node is not a private tree")
 	}
 
-	bLog, err := remote.History(base.Path{}, -1)
+	ratchetDistance, err := pt.ratchet.Compare(remoteRatchet, 1000000)
 	if err != nil {
-		if errors.Is(err, ratchet.ErrRatchetNotFound) {
-			// for now let's treat not finding the ratchet locally as no common history
+		if errors.Is(err, ratchet.ErrUnknownRatchetRelation) {
 			return result, base.ErrNoCommonHistory
 		}
 		return result, err
 	}
 
-	var (
-		aGen, bGen   int
-		aHist, bHist base.HistoryEntry
-	)
-
-	for aGen, aHist = range aLog {
-		for bGen, bHist = range bLog {
-			if aHist.Cid.Equals(bHist.Cid) {
-				if aGen == 0 && bGen > 0 {
-					if err := mergeHamt(pt.fs.Context(), pt.fs.HAMT(), remoteFs.HAMT()); err != nil {
-						return result, err
-					}
-					// fast-forward
-					bHist = bLog[0]
-					return base.MergeResult{
-						Type: base.MTFastForward,
-						// TODO(b5):
-						// 	Userland: si.Cid,
-						// 	Metadata: si.Metadata,
-						Cid:    bHist.Cid,
-						Size:   bHist.Size,
-						IsFile: bHist.Metadata.IsFile,
-					}, nil
-				} else if aGen > 0 && bGen == 0 {
-					result.Type = base.MTLocalAhead
-					aHist := aLog[0]
-					return base.MergeResult{
-						Type:   base.MTLocalAhead,
-						Cid:    aHist.Cid,
-						Size:   aHist.Size,
-						IsFile: aHist.Metadata.IsFile,
-					}, nil
-				} else {
-					// both local & remote are greater than zero, have diverged
-					if err := mergeHamt(pt.fs.Context(), pt.fs.HAMT(), remoteFs.HAMT()); err != nil {
-						return result, err
-					}
-					result.Type = base.MTMergeCommit
-					if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
-						return pt.MergeDiverged(remote)
-					}
-					return remote.MergeDiverged(pt)
-				}
-			}
+	if ratchetDistance == 0 {
+		if pt.cid.Equals(remoteCid) {
+			// ratchets are equal, cids are equal, in sync
+			return base.MergeResult{
+				Type:   base.MTInSync,
+				Cid:    pt.cid,
+				Size:   pt.info.Size,
+				IsFile: pt.info.Metadata.IsFile,
+			}, nil
 		}
+		// ratchets are equal & cids are inequal, histories have diverged
+		return pt.mergeDiverged(remoteFs, remoteCid, ratchetDistance, remote)
+	} else if ratchetDistance > 0 {
+		// local ratchet is ahead of remote, fetch HAMT CID for remote ratchet head
+		// and compare to local
+		localCid, err := cidFromPrivateName(pt.fs, remotePrivateName)
+		if err != nil {
+			return base.MergeResult{}, err
+		}
+
+		if localCid.Equals(remoteCid) {
+			// cids at matching ratchet positions are equal, local is strictly ahead
+			return base.MergeResult{
+				Type:   base.MTLocalAhead,
+				Cid:    pt.cid,
+				Size:   pt.info.Size,
+				IsFile: pt.info.Metadata.IsFile,
+			}, nil
+		}
+		// cids at matching ratchet positions are inequal, histories have diverged
+		return pt.mergeDiverged(remoteFs, remoteCid, ratchetDistance, remote)
 	}
 
+	// ratchetDistance < 0
+	// remote ratchet is ahead of local, fetch HAMT CID for remote ratchet head
+	// and compare to local
+	pn, err := pt.PrivateName()
+	if err != nil {
+		return base.MergeResult{}, err
+	}
+
+	remoteCidAtLocalRatchetHead, err := cidFromPrivateName(remoteFs, pn)
+	if err != nil {
+		return base.MergeResult{}, err
+	}
+
+	if pt.cid.Equals(remoteCidAtLocalRatchetHead) {
+		// cids at matching ratchet positions are equal, remote is strictly ahead
+		return base.MergeResult{
+			Type: base.MTFastForward,
+			Cid:  remoteCid,
+			// TODO(b5):
+			Size:   pt.info.Size,
+			IsFile: pt.info.Metadata.IsFile,
+		}, nil
+	}
+
+	// cids at matching ratchet positions are inequal, histories have diverged
+	return pt.mergeDiverged(remoteFs, remoteCid, ratchetDistance, remote)
+}
+
+func (pt *Tree) mergeDiverged(remoteFs base.PrivateMerkleDagFS, remoteCID cid.Cid, distToRemote int, remote base.Node) (result base.MergeResult, err error) {
 	if err := mergeHamt(pt.fs.Context(), pt.fs.HAMT(), remoteFs.HAMT()); err != nil {
 		return result, err
 	}
 	result.Type = base.MTMergeCommit
-	if aGen > bGen || (aGen == bGen && base.LessCID(aHist.Cid, bHist.Cid)) {
+	if distToRemote > 0 || (distToRemote == 0 && base.LessCID(pt.cid, remoteCID)) {
 		return pt.MergeDiverged(remote)
 	}
 	return remote.MergeDiverged(pt)
 }
 
+// TODO(b5): we don't actually want to *merge* HAMTs, we should take the one
+// that's farther ahead & add to it
 func mergeHamt(ctx context.Context, dst, src *hamt.Node) error {
 	return src.ForEach(ctx, func(k string, val *cbg.Deferred) error {
 		_, err := dst.SetIfAbsent(ctx, k, val)
 		return err
 	})
 }
-
-// // load a public node
-// func loadNode(fs base.MerkleDagFS, name string, id cid.Cid) (n base.Node, err error) {
-// 	ctx := fs.Context()
-// 	st := fs.DagStore()
-// 	header, err := st.GetNode(ctx, id)
-// 	if err != nil {
-// 		return n, err
-// 	}
-// 	metaLink := header.Links().Get(base.MetadataLinkName)
-// 	if metaLink == nil {
-// 		return nil, fmt.Errorf("cid %s does not point to a well-formed public header block: missing meta link", id.String())
-// 	}
-
-// 	md, err := base.LoadMetadata(ctx, st, metaLink.Cid)
-// 	if err != nil {
-// 		return n, fmt.Errorf("error loading meta at cid %s: %w", metaLink.Cid, err)
-// 	}
-// 	if md.IsFile {
-// 		return LoadFileFromCID(fs, name, id)
-// 	}
-
-// 	return LoadTreeFromCID(fs, name, id)
-// }
-
-// func loadNodeFromSkeletonInfo(fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
-// 	if info.IsFile {
-// 		return LoadFileFromCID(fs, name, info.Cid)
-// 	}
-// 	return LoadTreeFromCID(fs, name, info.Cid)
-// }
 
 func prevCID(s base.PrivateMerkleDagFS, r *ratchet.Spiral, name BareNamefilter) *cid.Cid {
 	old, err := s.PrivateStore().RatchetStore().OldestKnownRatchet(s.Context(), string(name))
