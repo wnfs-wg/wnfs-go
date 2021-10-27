@@ -21,12 +21,17 @@ const (
 )
 
 type MergeResult struct {
+	Name     string
 	Type     MergeType
 	Cid      cid.Cid // finalized (possibly updated) CID
 	Userland cid.Cid
 	Metadata cid.Cid
 	Size     int64
 	IsFile   bool
+
+	HamtRoot    *cid.Cid // TODO(b5): refactor this away. unused on public nodes, required for private
+	Key         string
+	PrivateName string
 }
 
 var _ PutResult = (*MergeResult)(nil)
