@@ -12,7 +12,7 @@ import (
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
-	"github.com/stretchr/testify/assert"
+	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
 

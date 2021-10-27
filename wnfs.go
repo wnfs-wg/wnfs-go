@@ -36,6 +36,7 @@ type WNFS interface {
 
 	Cid() cid.Cid
 	History(pathStr string, generations int) ([]HistoryEntry, error)
+	Merge(remote WNFS) (MergeResult, error)
 }
 
 type PosixFS interface {
@@ -55,6 +56,7 @@ type PosixFS interface {
 }
 
 type (
+	MergeResult  = base.MergeResult
 	HistoryEntry = base.HistoryEntry
 	// PrivateName abstracts the private package, providing a uniform interface
 	// for wnfs that doesn't add a userland dependency
@@ -336,6 +338,14 @@ func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error)
 	return node.History(relPath, max)
 }
 
+func (fsys *fileSystem) Merge(remote WNFS) (result MergeResult, err error) {
+	remoteFsys, ok := remote.(*fileSystem)
+	if !ok {
+		return result, fmt.Errorf("remote is not a valid wnfs filesystem")
+	}
+	return fsys.root.merge(remoteFsys.root)
+}
+
 func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree, relPath base.Path, err error) {
 	path, err := base.NewPath(pathStr)
 	if err != nil {
@@ -455,4 +465,22 @@ func (r *rootTree) Links() mdstore.Links {
 		mdstore.LinkFromNode(r.Private, FileHierarchyNamePrivate, false),
 	)
 	return links
+}
+
+func (r *rootTree) merge(remote *rootTree) (result MergeResult, err error) {
+	res, err := private.Merge(r.Private, remote.Private)
+	if err != nil {
+		return result, fmt.Errorf("merging /private: %w", err)
+	}
+	_, err = public.Merge(r.Public, remote.Public)
+	if err != nil {
+		return result, fmt.Errorf("merging /public: %w", err)
+	}
+	putResult, err := r.Put()
+	if err != nil {
+		return result, fmt.Errorf("writing WNFS root: %w", err)
+	}
+
+	log.Debugw("rootTree.merge", "putResult", putResult)
+	return res, nil
 }

@@ -16,6 +16,8 @@ import (
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
 	"github.com/qri-io/wnfs-go/ratchet"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testRootKey Key = [32]byte{
@@ -376,6 +378,56 @@ func TestWNFSPrivate(t *testing.T) {
 	}
 }
 
+func TestMerge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rs := ratchet.NewMemStore(ctx)
+	store, cleanup := newFileTestStore(ctx, t)
+	defer cleanup()
+	a, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	require.Nil(t, err)
+
+	pathStr := "private/priv_hello.txt"
+	fileContents := []byte("private hello!")
+	f := base.NewMemfileBytes("priv_hello.txt", fileContents)
+	err = a.Write(pathStr, f, MutationOptions{Commit: true})
+	require.Nil(t, err)
+
+	t.Logf("wnfs root CID: %s", a.(mdstore.DagNode).Cid())
+
+	key := a.RootKey()
+	rootCid := a.Cid()
+	pn, err := a.PrivateName()
+	require.Nil(t, err)
+	b, err := FromCID(ctx, store, rs, rootCid, key, pn)
+	require.Nil(t, err)
+
+	pathStr = "public/pub_hello.txt"
+	fileContents = []byte("public hello!")
+	f = base.NewMemfileBytes("pub_hello.txt", fileContents)
+	err = b.Write(pathStr, f, MutationOptions{Commit: true})
+	require.Nil(t, err)
+
+	res, err := a.Merge(b)
+	require.Nil(t, err)
+
+	t.Logf("wnfs root CID: %s", a.(mdstore.DagNode).Cid())
+	t.Logf("response: %v", res)
+
+	privDir, err := a.Open("private")
+	require.Nil(t, err)
+	mustDirChildren(t, privDir.(base.Tree), []string{
+		"priv_hello.txt",
+	})
+
+	pubDir, err := a.Open("public")
+	require.Nil(t, err)
+	mustDirChildren(t, pubDir.(base.Tree), []string{
+		"pub_hello.txt",
+	})
+}
+
 func BenchmarkPrivateCat10MbFile(t *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -568,4 +620,17 @@ func newFileTestStore(ctx context.Context, f fataler) (st mdstore.MerkleDagStore
 	}
 
 	return store, cleanup
+}
+
+func mustDirChildren(t *testing.T, dir base.Tree, ch []string) {
+	t.Helper()
+	ents, err := dir.ReadDir(-1)
+	require.Nil(t, err)
+
+	got := make([]string, 0, len(ents))
+	for _, ch := range ents {
+		got = append(got, ch.Name())
+	}
+
+	assert.Equal(t, ch, got)
 }
