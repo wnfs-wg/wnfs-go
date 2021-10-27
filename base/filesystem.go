@@ -37,6 +37,7 @@ type PrivateMerkleDagFS interface {
 
 type Node interface {
 	fs.File
+	Cid() cid.Cid
 	AsHistoryEntry() HistoryEntry
 	AsLink() mdstore.Link
 
@@ -51,6 +52,7 @@ type File interface {
 
 type Tree interface {
 	Node
+	fs.ReadDirFile
 	Get(path Path) (fs.File, error)
 	Add(path Path, f fs.File) (PutResult, error)
 	Copy(path Path, srcPath string, src fs.FS) (PutResult, error)
