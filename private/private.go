@@ -180,6 +180,12 @@ func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
 
 func (r *Root) Put() (base.PutResult, error) {
 	log.Debugw("Root.Put", "name", r.name, "hamtCID", r.hamtRootCID, "key", Key(r.ratchet.Key()).Encode())
+
+	// TODO(b5): note entirely sure this is necessary
+	if _, err := r.fs.PrivateStore().RatchetStore().PutRatchet(r.fs.Context(), r.info.INum.Encode(), r.ratchet); err != nil {
+		return nil, err
+	}
+
 	res, err := r.Tree.Put()
 	if err != nil {
 		return nil, err
@@ -593,6 +599,9 @@ func (pt *Tree) History(path base.Path, maxRevs int) ([]base.HistoryEntry, error
 			Cid:      contentID,
 			Metadata: info.Metadata,
 			Size:     info.Size,
+
+			Key:         key.Encode(),
+			PrivateName: string(pn),
 		}
 	}
 
@@ -671,9 +680,10 @@ func (pt *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult,
 }
 
 func (pt *Tree) Put() (base.PutResult, error) {
-	log.Debugw("Tree.Put", "name", pt.name, "len(links)", len(pt.info.Links))
+	log.Debugw("Tree.Put", "name", pt.name, "len(links)", len(pt.info.Links), "prevRatchet", pt.ratchet.Summary())
 
 	pt.ratchet.Inc()
+	log.Debugw("Tree.Put", "new ratchet", pt.ratchet.Summary())
 	key := pt.ratchet.Key()
 	pt.info.Ratchet = pt.ratchet.Encode()
 	pt.info.Size = pt.info.Links.SizeSum()

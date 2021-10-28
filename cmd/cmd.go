@@ -12,6 +12,8 @@ import (
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
 	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
+	"github.com/qri-io/wnfs-go/fsdiff"
+	"github.com/qri-io/wnfs-go/mdstore"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -21,7 +23,7 @@ func init() {
 	}
 }
 
-func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
+func open(ctx context.Context) (wnfs.WNFS, mdstore.MerkleDagStore, *ExternalState) {
 	ipfsPath := os.Getenv("IPFS_PATH")
 	if ipfsPath == "" {
 		dir, err := configDirPath()
@@ -72,7 +74,7 @@ func open(ctx context.Context) (wnfs.WNFS, *ExternalState) {
 		}
 	}
 
-	return fs, state
+	return fs, store, state
 }
 
 func main() {
@@ -81,6 +83,7 @@ func main() {
 
 	var (
 		fs                  wnfs.WNFS
+		store               mdstore.MerkleDagStore
 		state               *ExternalState
 		updateExternalState func()
 	)
@@ -98,7 +101,7 @@ func main() {
 				golog.SetLogLevel("wnfs", "debug")
 			}
 
-			fs, state = open(ctx)
+			fs, store, state = open(ctx)
 			updateExternalState = func() {
 				state.RootCID = fs.Cid()
 				state.RootKey = fs.RootKey()
@@ -202,10 +205,10 @@ func main() {
 						return err
 					}
 
-					fmt.Println("date\tsize\tcid")
+					fmt.Println("date\tsize\tcid\tkey\tprivate name")
 					for _, entry := range entries {
 						ts := time.Unix(entry.Metadata.UnixMeta.Mtime, 0)
-						fmt.Printf("%s\t%s\t%s\n", ts.Format(time.RFC3339), humanize.Bytes(uint64(entry.Size)), entry.Cid)
+						fmt.Printf("%s\t%s\t%s\t%s\t%s\n", ts.Format(time.RFC3339), humanize.Bytes(uint64(entry.Size)), entry.Cid, entry.Key, entry.PrivateName)
 					}
 					return nil
 				},
@@ -228,7 +231,7 @@ func main() {
 					// TODO(b5): can't yet create tree from wnfs root.
 					// for now replace empty string with "public"
 					if path == "" {
-						path = "public"
+						path = "."
 					}
 
 					s, err := treeString(fs, path)
@@ -237,6 +240,48 @@ func main() {
 					}
 
 					os.Stdout.Write([]byte(s))
+					return nil
+				},
+			},
+			{
+				Name:  "diff",
+				Usage: "",
+				Action: func(c *cli.Context) error {
+					cmdCtx, cancel := context.WithCancel(ctx)
+					defer cancel()
+
+					entries, err := fs.History(".", 2)
+					if err != nil {
+						return err
+					}
+					if len(entries) < 2 {
+						fmt.Println("no history")
+						return nil
+					}
+
+					key := &wnfs.Key{}
+					if err := key.Decode(entries[1].Key); err != nil {
+						return err
+					}
+
+					prev, err := wnfs.FromCID(cmdCtx, store, state.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
+					if err != nil {
+						errExit("error: opening previous WNFS %s:\n%s\n", state.RootCID, err.Error())
+					}
+
+					diff, err := fsdiff.Unix("", "", fs, prev)
+					if err != nil {
+						errExit("error: constructing diff: %s", err)
+					}
+
+					fmt.Println(fsdiff.PrettyPrintFileDiffs(diff))
+					return nil
+				},
+			},
+			{
+				Name:  "merge",
+				Usage: "",
+				Action: func(c *cli.Context) error {
 					return nil
 				},
 			},

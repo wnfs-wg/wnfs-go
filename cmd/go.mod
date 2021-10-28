@@ -248,6 +248,7 @@ require (
 	github.com/ipfs/go-unixfsnode v1.1.2 // indirect
 	github.com/libp2p/zeroconf/v2 v2.0.0 // indirect
 	github.com/pierrec/xxHash v0.1.5 // indirect
+	github.com/sergi/go-diff v1.2.0 // indirect
 	go.opentelemetry.io/otel v0.20.0 // indirect
 	go.opentelemetry.io/otel/metric v0.20.0 // indirect
 	go.opentelemetry.io/otel/trace v0.20.0 // indirect
