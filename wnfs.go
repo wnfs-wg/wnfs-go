@@ -20,10 +20,12 @@ import (
 var log = golog.Logger("wnfs")
 
 const (
-	// FileHierarchyNamePublic is the root of public files on WNFS
-	FileHierarchyNamePublic = "public"
+	// PreviousLinkName is the string for a historical backpointer in wnfs
+	PreviousLinkName = "previous"
 	// FileHierarchyNamePrivate is the root of encrypted files on WNFS
 	FileHierarchyNamePrivate = "private"
+	// FileHierarchyNamePublic is the root of public files on WNFS
+	FileHierarchyNamePublic = "public"
 	// FileHierarchyNamePretty is a link to a read-only branch at the root of a WNFS
 	FileHierarchyNamePretty = "p"
 )
@@ -145,15 +147,7 @@ func (fsys *fileSystem) Size() int64              { return fsys.root.Size() }
 func (fsys *fileSystem) Links() mdstore.Links     { return fsys.root.Links() }
 
 func (fsys *fileSystem) Stat() (fs.FileInfo, error) {
-	return base.NewFSFileInfo(
-		"",
-		fsys.root.Size(),
-		fs.ModeDir,
-		// TODO (b5):
-		// mtime: time.Unix(t.metadata.UnixMeta.Mtime, 0),
-		time.Unix(0, 0),
-		fsys.store,
-	), nil
+	return fsys.root.Stat()
 }
 
 func (fsys *fileSystem) Read(p []byte) (n int, err error) {
@@ -162,13 +156,7 @@ func (fsys *fileSystem) Read(p []byte) (n int, err error) {
 func (fsys *fileSystem) Close() error { return nil }
 
 func (fsys *fileSystem) ReadDir(n int) ([]fs.DirEntry, error) {
-	if n != -1 {
-		return nil, errors.New("wnfs root only supports n= -1 for directory listing")
-	}
-
-	return []fs.DirEntry{
-		base.NewFSDirEntry(FileHierarchyNamePublic, false),
-	}, nil
+	return fsys.root.ReadDir(n)
 }
 
 func (fsys *fileSystem) RootKey() Key {
@@ -328,6 +316,9 @@ func (fsys *fileSystem) Rm(pathStr string, opts ...MutationOptions) error {
 }
 
 func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error) {
+	if pathStr == "." || pathStr == "" {
+		return fsys.root.history(max)
+	}
 	node, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
 		return nil, err
@@ -345,6 +336,8 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 	head, tail := path.Shift()
 	log.Debugw("fsHierarchyDirectoryNode", "head", head, "path", path)
 	switch head {
+	case "", ".":
+		return fsys.root, tail, nil
 	case FileHierarchyNamePublic:
 		return fsys.root.Public, tail, nil
 	case FileHierarchyNamePrivate:
@@ -361,10 +354,13 @@ type rootTree struct {
 	id   cid.Cid
 	size int64
 
-	Pretty  *base.BareTree
-	Public  *public.PublicTree
-	Private *private.Root
+	previous *cid.Cid
+	Pretty   *base.BareTree
+	Public   *public.PublicTree
+	Private  *private.Root
 }
+
+var _ base.Tree = (*rootTree)(nil)
 
 func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (*rootTree, error) {
 	root := &rootTree{
@@ -393,6 +389,11 @@ func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootK
 	}
 
 	links := node.Links()
+
+	var prev *cid.Cid
+	if prevLink := links.Get(PreviousLinkName); prevLink != nil {
+		prev = &prevLink.Cid
+	}
 
 	publicLink := links.Get(FileHierarchyNamePublic)
 	if publicLink == nil {
@@ -427,15 +428,19 @@ func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootK
 		fs: fs,
 		id: id,
 
-		Public:  public,
-		Pretty:  &base.BareTree{}, // TODO(b5): finish pretty tree
-		Private: privateRoot,
+		Public:   public,
+		Pretty:   &base.BareTree{}, // TODO(b5): finish pretty tree
+		Private:  privateRoot,
+		previous: prev,
 	}
 
 	return root, nil
 }
 
 func (r *rootTree) Put() (mdstore.PutResult, error) {
+	if r.id.Equals(cid.Undef) {
+		r.previous = &r.id
+	}
 	result, err := r.fs.DagStore().PutNode(r.Links())
 	if err != nil {
 		return result, err
@@ -448,11 +453,174 @@ func (r *rootTree) Put() (mdstore.PutResult, error) {
 func (r *rootTree) Cid() cid.Cid { return r.id }
 func (r *rootTree) Name() string { return "wnfs" }
 func (r *rootTree) Size() int64  { return r.size }
+func (t *rootTree) AsLink() mdstore.Link {
+	return mdstore.Link{
+		Name:   "",
+		Cid:    t.id,
+		Size:   t.size,
+		IsFile: false,
+		// TODO(b5):
+		// Mtime:  t.metadata.UnixMeta.Mtime,
+	}
+}
 func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(
 		// mdstore.LinkFromNode(r.Pretty, FileHierarchyNamePretty, false),
 		mdstore.LinkFromNode(r.Public, FileHierarchyNamePublic, false),
 		mdstore.LinkFromNode(r.Private, FileHierarchyNamePrivate, false),
 	)
+	if !r.id.Equals(cid.Undef) {
+		links.Add(mdstore.LinkFromNode(r, PreviousLinkName, false))
+	}
 	return links
+}
+
+func (r *rootTree) Get(path base.Path) (fs.File, error) {
+	head, tail := path.Shift()
+	log.Debugw("rootTree.Get", "head", head, "path", path)
+	switch head {
+	case "", ".":
+		return r, nil
+	case FileHierarchyNamePublic:
+		return r.Public.Get(tail)
+	case FileHierarchyNamePrivate:
+		return r.Private.Get(tail)
+	// case FileHierarchyNamePretty:
+	// 	return fsys.root.Pretty, relPath, nil
+	default:
+		return nil, fmt.Errorf("%q is not a valid filesystem path", path)
+	}
+}
+
+func (r *rootTree) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res base.PutResult, err error) {
+	return nil, fmt.Errorf("cannot copy directly into root directory, only /public or /private")
+}
+
+func (r *rootTree) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
+	return nil, fmt.Errorf("cannot write directly into root directory, only /public or /private")
+}
+
+func (r *rootTree) Mkdir(path base.Path) (res base.PutResult, err error) {
+	return nil, fmt.Errorf("cannot create directory within root. only /public or /private")
+}
+
+func (r *rootTree) Rm(path base.Path) (res base.PutResult, err error) {
+	return nil, fmt.Errorf("cannot remove directory from root")
+}
+
+func (r *rootTree) Stat() (fi fs.FileInfo, err error) {
+	return base.NewFSFileInfo(
+		"",
+		r.Size(),
+		fs.ModeDir,
+		// TODO (b5):
+		// mtime: time.Unix(t.metadata.UnixMeta.Mtime, 0),
+		time.Unix(0, 0),
+		r.fs.DagStore(),
+	), nil
+}
+
+func (r *rootTree) ReadDir(n int) ([]fs.DirEntry, error) {
+	if n != -1 {
+		return nil, errors.New("wnfs root only supports n= -1 for directory listing")
+	}
+
+	links := []fs.DirEntry{}
+	if r.Private != nil {
+		links = append(links, base.NewFSDirEntry(FileHierarchyNamePrivate, false))
+	}
+	if r.Public != nil {
+		links = append(links, base.NewFSDirEntry(FileHierarchyNamePublic, false))
+	}
+
+	// TODO(b5): pretty dir
+
+	return links, nil
+}
+
+func (r *rootTree) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("not a file")
+}
+
+func (r *rootTree) Close() error {
+	return nil
+}
+
+func (r *rootTree) AsHistoryEntry() base.HistoryEntry {
+	ent := base.HistoryEntry{
+		Cid:  r.id,
+		Size: r.size,
+		// TODO(b5): root needs metadata
+		Metadata: &base.Metadata{UnixMeta: base.NewUnixMeta(false)},
+		Previous: r.previous,
+	}
+
+	if r.Private != nil {
+		if n, err := r.Private.PrivateName(); err == nil {
+			ent.PrivateName = string(n)
+		}
+		ent.Key = r.Private.Key().Encode()
+	}
+
+	return ent
+}
+
+func (r *rootTree) History(base.Path, int) ([]base.HistoryEntry, error) {
+	return nil, fmt.Errorf("unfinished: root tree History method")
+}
+
+func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
+	ctx := r.fs.Context()
+	store := r.fs.DagStore()
+
+	hist = []base.HistoryEntry{
+		r.AsHistoryEntry(),
+	}
+
+	var privHist []base.HistoryEntry
+	if r.Private != nil {
+		if privHist, err = r.Private.History(base.Path{}, -1); err != nil {
+			return hist, err
+		}
+		if len(privHist) >= 1 {
+			privHist = privHist[1:]
+		}
+	}
+	log.Debugw("private history", "history", privHist)
+
+	prev := hist[0].Previous
+	i := 0
+	for prev != nil {
+		nd, err := store.GetNode(ctx, *prev)
+		if err != nil {
+			return nil, err
+		}
+		ent := base.HistoryEntry{
+			Cid: nd.Cid(),
+			// TODO(b5): metadata on root
+			Metadata: &base.Metadata{UnixMeta: base.NewUnixMeta(false)},
+			Size:     0,
+		}
+		if lnk := nd.Links().Get(PreviousLinkName); lnk != nil {
+			ent.Previous = &lnk.Cid
+		}
+		if len(privHist) > i {
+			ent.Key = privHist[i].Key
+			ent.PrivateName = privHist[i].PrivateName
+		}
+
+		i++
+		hist = append(hist, ent)
+		prev = ent.Previous
+
+		if len(hist) == max {
+			break
+		}
+	}
+
+	return hist, nil
+}
+
+func (r *rootTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
+	return base.MergeResult{}, fmt.Errorf("unfinished: root tree MergeDiverged")
 }

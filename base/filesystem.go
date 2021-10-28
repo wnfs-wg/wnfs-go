@@ -89,6 +89,9 @@ type HistoryEntry struct {
 	Previous *cid.Cid  `json:"previous"`
 	Metadata *Metadata `json:"metadata"`
 	Size     int64     `json:"size"`
+
+	Key         string `json:"key,omitempty"`
+	PrivateName string `json:"privateName,omitempty"`
 }
 
 func Filename(file fs.File) (string, error) {
