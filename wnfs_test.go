@@ -16,6 +16,7 @@ import (
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
 	"github.com/qri-io/wnfs-go/ratchet"
+	"github.com/stretchr/testify/require"
 )
 
 var testRootKey Key = [32]byte{
@@ -113,6 +114,48 @@ func TestPublicWNFS(t *testing.T) {
 			t.Errorf("expected 2 entries. got: %d", len(ents))
 		}
 	})
+}
+
+func TestMerge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := newMemTestStore(ctx, t)
+	rs := ratchet.NewMemStore(ctx)
+
+	a, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pathStr := "public/foo/hello.txt"
+	fileContents := []byte("hello!")
+	f := base.NewMemfileBytes("hello.txt", fileContents)
+	err = a.Write(pathStr, f, MutationOptions{Commit: true})
+	require.Nil(t, err)
+
+	pn, err := a.PrivateName()
+	require.Nil(t, err)
+
+	b, err := FromCID(ctx, store, rs, a.Cid(), a.RootKey(), pn)
+	require.Nil(t, err)
+
+	pathStr = "public/foo/world.txt"
+	fileContents = []byte("world!")
+	f = base.NewMemfileBytes("world.txt", fileContents)
+	err = a.Write(pathStr, f, MutationOptions{Commit: true})
+	require.Nil(t, err)
+
+	pathStr = "public/bonjour.txt"
+	fileContents = []byte("bjr!")
+	f = base.NewMemfileBytes("bonjour.txt", fileContents)
+	err = b.Write(pathStr, f, MutationOptions{Commit: true})
+	require.Nil(t, err)
+
+	res, err := Merge(a, b)
+	require.Nil(t, err)
+
+	t.Logf("%#v", res)
 }
 
 func BenchmarkPublicCat10MbFile(t *testing.B) {

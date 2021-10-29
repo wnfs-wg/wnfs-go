@@ -624,3 +624,35 @@ func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
 func (r *rootTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
 	return base.MergeResult{}, fmt.Errorf("unfinished: root tree MergeDiverged")
 }
+
+func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
+	a, ok := aFs.(*fileSystem)
+	if !ok {
+		return result, fmt.Errorf("'a' is not a wnfs filesystem")
+	}
+	b, ok := bFs.(*fileSystem)
+	if !ok {
+		return result, fmt.Errorf("'b' is not a wnfs filesystem")
+	}
+	log.Debugw("Merge", "acid", a.Cid(), "bcid", b.Cid())
+
+	if a.root.Public != nil && b.root.Public != nil {
+		res, err := public.Merge(a.root.Public, b.root.Public)
+		if err != nil {
+			return result, err
+		}
+		fmt.Printf("/public:\t%s\n", res.Type)
+	}
+	if a.root.Private != nil && b.root.Private != nil {
+		res, err := private.Merge(a.root.Private, b.root.Private)
+		if err != nil {
+			return result, err
+		}
+		fmt.Printf("/private:\t%s\n", res.Type)
+	}
+
+	_, err = a.root.Put()
+
+	// TODO(b5): populate result
+	return result, nil
+}

@@ -221,7 +221,24 @@ func main() {
 				Name:  "merge",
 				Usage: "",
 				Action: func(c *cli.Context) error {
-					return nil
+					a := repo.WNFS()
+					cmdCtx, cancel := context.WithCancel(ctx)
+					defer cancel()
+
+					path := c.Args().Get(0)
+					if filepath.Base(path) != repoDirname {
+						path = filepath.Join(path, repoDirname)
+					}
+					fmt.Printf("reading wnfs repo from %q ...", path)
+					bRepo, err := OpenRepoPath(cmdCtx, path)
+					if err != nil {
+						return err
+					}
+					b := bRepo.WNFS()
+					fmt.Printf("done\n")
+
+					_, err = wnfs.Merge(a, b)
+					return err
 				},
 			},
 		},
