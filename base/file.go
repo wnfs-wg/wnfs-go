@@ -54,15 +54,21 @@ func (fi fileInfo) Metadata() Metadata { return fi.metadata }
 func (fi fileInfo) Previous() *cid.Cid { return fi.previous }
 func (fi fileInfo) Userland() cid.Cid  { return fi.userland }
 
+type FileInfo interface {
+	fs.FileInfo
+
+	Cid() cid.Cid
+}
+
 type FSFileInfo struct {
 	name  string      // base name of the file
 	size  int64       // length in bytes for regular files; system-dependent for others
 	mode  fs.FileMode // file mode bits
 	mtime time.Time   // modification time
 	sys   interface{}
-}
 
-var _ os.FileInfo = (*FSFileInfo)(nil)
+	cid cid.Cid // file identifier
+}
 
 func NewFSFileInfo(name string, size int64, mode fs.FileMode, mtime time.Time, sys interface{}) FSFileInfo {
 	return FSFileInfo{
@@ -84,6 +90,18 @@ func (fi FSFileInfo) Sys() interface{}   { return fi.sys }
 func (fi *FSFileInfo) SetFilename(name string) error {
 	fi.name = name
 	return nil
+}
+
+func Stat(f fs.File) (FileInfo, error) {
+	afi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	st, ok := afi.(FileInfo)
+	if !ok {
+		return nil, fmt.Errorf("expected base.FileInfo")
+	}
+	return st, nil
 }
 
 type FSDirEntry struct {

@@ -350,9 +350,10 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 }
 
 type rootTree struct {
-	fs   base.MerkleDagFS
-	id   cid.Cid
-	size int64
+	fs     base.MerkleDagFS
+	pstore mdstore.PrivateStore
+	id     cid.Cid
+	size   int64
 
 	previous *cid.Cid
 	Pretty   *base.BareTree
@@ -425,8 +426,9 @@ func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootK
 	}
 
 	root := &rootTree{
-		fs: fs,
-		id: id,
+		fs:     fs,
+		pstore: privStore,
+		id:     id,
 
 		Public:   public,
 		Pretty:   &base.BareTree{}, // TODO(b5): finish pretty tree
@@ -641,14 +643,28 @@ func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
 		if err != nil {
 			return result, err
 		}
+		log.Debugw("merged public", "result", res.Cid)
 		fmt.Printf("/public:\t%s\n", res.Type)
+		a.root.Public, err = public.LoadTreeFromCID(a.root.fs, FileHierarchyNamePublic, res.Cid)
+		if err != nil {
+			return base.MergeResult{}, err
+		}
 	}
 	if a.root.Private != nil && b.root.Private != nil {
 		res, err := private.Merge(a.root.Private, b.root.Private)
 		if err != nil {
 			return result, err
 		}
+		log.Debugw("merged private", "result", res.Cid)
 		fmt.Printf("/private:\t%s\n", res.Type)
+		pk := &private.Key{}
+		if err := pk.Decode(res.Key); err != nil {
+			return result, err
+		}
+		a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
+		if err != nil {
+			return result, err
+		}
 	}
 
 	_, err = a.root.Put()

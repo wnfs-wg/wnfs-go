@@ -23,6 +23,8 @@ const (
 // reads/writes
 const LatestVersion = SemVer("2.0.0dev")
 
+var ErrNoLink = fmt.Errorf("no link")
+
 type MerkleDagFS interface {
 	fs.FS
 	Context() context.Context
