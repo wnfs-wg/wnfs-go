@@ -237,6 +237,7 @@ func main() {
 					b := bRepo.WNFS()
 					fmt.Printf("done\n")
 
+					defer repo.Close()
 					_, err = wnfs.Merge(a, b)
 					return err
 				},

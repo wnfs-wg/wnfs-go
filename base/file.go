@@ -56,8 +56,19 @@ func (fi fileInfo) Userland() cid.Cid  { return fi.userland }
 
 type FileInfo interface {
 	fs.FileInfo
-
 	Cid() cid.Cid
+}
+
+func Stat(f fs.File) (FileInfo, error) {
+	afi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	st, ok := afi.(FileInfo)
+	if !ok {
+		return nil, fmt.Errorf("expected base.FileInfo")
+	}
+	return st, nil
 }
 
 type FSFileInfo struct {
@@ -90,18 +101,6 @@ func (fi FSFileInfo) Sys() interface{}   { return fi.sys }
 func (fi *FSFileInfo) SetFilename(name string) error {
 	fi.name = name
 	return nil
-}
-
-func Stat(f fs.File) (FileInfo, error) {
-	afi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	st, ok := afi.(FileInfo)
-	if !ok {
-		return nil, fmt.Errorf("expected base.FileInfo")
-	}
-	return st, nil
 }
 
 type FSDirEntry struct {

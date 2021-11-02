@@ -53,7 +53,7 @@ func TestPublicWNFS(t *testing.T) {
 			t.Error(err)
 		}
 
-		t.Logf("wnfs root CID: %s", fsys.(mdstore.DagNode).Cid())
+		t.Logf("wnfs root CID: %s", fsys.Cid())
 
 		gotFileContents, err := fsys.Cat(pathStr)
 		if err != nil {
@@ -332,7 +332,7 @@ func TestWNFSPrivate(t *testing.T) {
 		t.Error(err)
 	}
 
-	t.Logf("wnfs root CID: %s", fsys.(mdstore.DagNode).Cid())
+	t.Logf("wnfs root CID: %s", fsys.Cid())
 
 	gotFileContents, err := fsys.Cat(pathStr)
 	if err != nil {

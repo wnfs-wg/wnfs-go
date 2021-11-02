@@ -93,7 +93,6 @@ type fileSystem struct {
 var (
 	_ WNFS             = (*fileSystem)(nil)
 	_ base.MerkleDagFS = (*fileSystem)(nil)
-	_ mdstore.DagNode  = (*fileSystem)(nil)
 )
 
 func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet.Store, rootKey Key) (WNFS, error) {
@@ -467,12 +466,12 @@ func (t *rootTree) AsLink() mdstore.Link {
 }
 func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(
-		// mdstore.LinkFromNode(r.Pretty, FileHierarchyNamePretty, false),
-		mdstore.LinkFromNode(r.Public, FileHierarchyNamePublic, false),
-		mdstore.LinkFromNode(r.Private, FileHierarchyNamePrivate, false),
+		// mdstore.Link{Cid: r.Pretty, Size: r.Pretty.Size(), Name: FileHierarchyNamePretty},
+		mdstore.Link{Cid: r.Public.Cid(), Size: r.Public.Size(), Name: FileHierarchyNamePublic},
+		mdstore.Link{Cid: r.Private.Cid(), Size: r.Private.Size(), Name: FileHierarchyNamePrivate},
 	)
-	if !r.id.Equals(cid.Undef) {
-		links.Add(mdstore.LinkFromNode(r, PreviousLinkName, false))
+	if r.previous != nil && !r.id.Equals(cid.Undef) {
+		links.Add(mdstore.Link{Cid: *r.previous, Name: PreviousLinkName})
 	}
 	return links
 }
@@ -650,22 +649,22 @@ func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
 			return base.MergeResult{}, err
 		}
 	}
-	if a.root.Private != nil && b.root.Private != nil {
-		res, err := private.Merge(a.root.Private, b.root.Private)
-		if err != nil {
-			return result, err
-		}
-		log.Debugw("merged private", "result", res.Cid)
-		fmt.Printf("/private:\t%s\n", res.Type)
-		pk := &private.Key{}
-		if err := pk.Decode(res.Key); err != nil {
-			return result, err
-		}
-		a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
-		if err != nil {
-			return result, err
-		}
-	}
+	// if a.root.Private != nil && b.root.Private != nil {
+	// 	res, err := private.Merge(a.root.Private, b.root.Private)
+	// 	if err != nil {
+	// 		return result, err
+	// 	}
+	// 	log.Debugw("merged private", "result", res.Cid)
+	// 	fmt.Printf("/private:\t%s\n", res.Type)
+	// 	pk := &private.Key{}
+	// 	if err := pk.Decode(res.Key); err != nil {
+	// 		return result, err
+	// 	}
+	// 	a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
+	// 	if err != nil {
+	// 		return result, err
+	// 	}
+	// }
 
 	_, err = a.root.Put()
 

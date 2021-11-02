@@ -56,7 +56,6 @@ type Root struct {
 var (
 	_ privateNode             = (*Root)(nil)
 	_ base.PrivateMerkleDagFS = (*Root)(nil)
-	_ mdstore.DagNode         = (*Root)(nil)
 	_ base.Tree               = (*Root)(nil)
 	_ fs.File                 = (*Root)(nil)
 	_ fs.ReadDirFile          = (*Root)(nil)
@@ -244,11 +243,10 @@ type Tree struct {
 }
 
 var (
-	_ privateNode     = (*Tree)(nil)
-	_ mdstore.DagNode = (*Tree)(nil)
-	_ base.Tree       = (*Tree)(nil)
-	_ fs.File         = (*Tree)(nil)
-	_ fs.ReadDirFile  = (*Tree)(nil)
+	_ privateNode    = (*Tree)(nil)
+	_ base.Tree      = (*Tree)(nil)
+	_ fs.File        = (*Tree)(nil)
+	_ fs.ReadDirFile = (*Tree)(nil)
 )
 
 func NewEmptyTree(fs base.PrivateMerkleDagFS, parent BareNamefilter, name string) (*Tree, error) {

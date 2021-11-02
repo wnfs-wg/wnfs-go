@@ -8,18 +8,21 @@ import (
 	"sort"
 
 	blocks "github.com/ipfs/go-block-format"
-	"github.com/ipfs/go-blockservice"
+	blockservice "github.com/ipfs/go-blockservice"
 	cid "github.com/ipfs/go-cid"
-	"github.com/ipfs/go-cidutil"
+	cidutil "github.com/ipfs/go-cidutil"
 	chunker "github.com/ipfs/go-ipfs-chunker"
 	format "github.com/ipfs/go-ipld-format"
-	"github.com/ipfs/go-merkledag"
-	"github.com/ipfs/go-unixfs"
-	"github.com/ipfs/go-unixfs/importer/balanced"
+	golog "github.com/ipfs/go-log"
+	merkledag "github.com/ipfs/go-merkledag"
+	unixfs "github.com/ipfs/go-unixfs"
+	balanced "github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
 	unixfsio "github.com/ipfs/go-unixfs/io"
-	"github.com/multiformats/go-multihash"
+	multihash "github.com/multiformats/go-multihash"
 )
+
+var log = golog.Logger("wnfs")
 
 // MerkleDagStore is a store of Content-Addressed block data indexed by merkle
 // proofs. It's an abstraction over IPFS that defines the required feature set
@@ -181,10 +184,32 @@ func (mds *merkleDagStore) GetFile(ctx context.Context, root cid.Cid) (io.ReadCl
 	return unixfsio.NewDagReader(ctx, nd, ses)
 }
 
+// Copy blocks from src to dst
+func CopyBlocks(ctx context.Context, id cid.Cid, src, dst MerkleDagStore) error {
+	n, err := src.GetNode(ctx, id)
+	if err != nil {
+		return err
+	}
+	log.Debugw("CopyBlock", "cid", n.Cid(), "len(links)", n.Links().Len())
+	for _, l := range n.Links().Map() {
+		if err := CopyBlocks(ctx, l.Cid, src, dst); err != nil {
+			return fmt.Errorf("copying block %q: %w", l.Cid, err)
+		}
+	}
+
+	blk, err := src.Blockservice().Blockstore().Get(id)
+	if err != nil {
+		return err
+	}
+
+	return dst.Blockservice().Blockstore().Put(blk)
+}
+
 type DagNode interface {
 	Size() int64
 	Cid() cid.Cid
 	Links() Links
+	Raw() []byte
 }
 
 type dagNode struct {
