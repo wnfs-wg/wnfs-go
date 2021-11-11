@@ -137,7 +137,7 @@ func (r *Spiral) IncBy(n int) {
 	*r = jumped
 }
 
-var ErrUnknownRatchetRelation = fmt.Errorf("unknown")
+var ErrUnknownRatchetRelation = fmt.Errorf("cannot relate ratchets")
 
 func (r Spiral) Compare(b Spiral, maxSteps int) (int, error) {
 	var (

@@ -27,7 +27,7 @@ func Merge(aNode, bNode base.Node) (result base.MergeResult, err error) {
 		return result, fmt.Errorf("cannot merge. Node must be private")
 	}
 
-	log.Debugw("Merge", "a", a, "b", b)
+	log.Debugw("Merge", "a", a.Cid(), "b", b.Cid())
 	return merge(dest, a, b)
 }
 
@@ -82,6 +82,7 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 
 	ratchetDistance, err := a.Ratchet().Compare(*b.Ratchet(), 100000)
 	if err != nil {
+		log.Debugw("comparing ratchets", "a", a.Ratchet().Summary(), "b", b.Ratchet().Summary(), "err", err)
 		if errors.Is(err, ratchet.ErrUnknownRatchetRelation) {
 			return result, base.ErrNoCommonHistory
 		}

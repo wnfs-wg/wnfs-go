@@ -117,7 +117,7 @@ func (r *Repo) Close() error {
 	if err != nil {
 		return fmt.Errorf("reading private name: %w", err)
 	}
-	fmt.Printf("writing root cid: %s...", r.state.RootCID)
+	fmt.Printf("writing root cid: %s ...", r.state.RootCID)
 	if err := r.state.Write(); err != nil {
 		fmt.Printf("\n")
 		return fmt.Errorf("writing external state: %w", err)
