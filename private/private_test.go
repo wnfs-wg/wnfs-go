@@ -2,10 +2,12 @@ package private
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
 
+	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	cid "github.com/ipfs/go-cid"
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
@@ -14,6 +16,7 @@ import (
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 	"github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
+	cbg "github.com/whyrusleeping/cbor-gen"
 )
 
 func init() {
@@ -418,4 +421,13 @@ func mustFileContents(t *testing.T, dir base.Tree, path, content string) {
 	require.Nil(t, err)
 
 	assert.Equal(t, content, string(data))
+}
+
+func printHamt(label string, h *hamt.Node) {
+	ctx := context.Background()
+	fmt.Printf("HAMT: %s\n", label)
+	h.ForEach(ctx, func(k string, val *cbg.Deferred) error {
+		fmt.Println(k)
+		return nil
+	})
 }

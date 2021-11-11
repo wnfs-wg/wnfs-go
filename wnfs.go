@@ -93,7 +93,6 @@ type fileSystem struct {
 var (
 	_ WNFS             = (*fileSystem)(nil)
 	_ base.MerkleDagFS = (*fileSystem)(nil)
-	_ mdstore.DagNode  = (*fileSystem)(nil)
 )
 
 func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet.Store, rootKey Key) (WNFS, error) {
@@ -350,9 +349,10 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 }
 
 type rootTree struct {
-	fs   base.MerkleDagFS
-	id   cid.Cid
-	size int64
+	fs     base.MerkleDagFS
+	pstore mdstore.PrivateStore
+	id     cid.Cid
+	size   int64
 
 	previous *cid.Cid
 	Pretty   *base.BareTree
@@ -425,8 +425,9 @@ func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootK
 	}
 
 	root := &rootTree{
-		fs: fs,
-		id: id,
+		fs:     fs,
+		pstore: privStore,
+		id:     id,
 
 		Public:   public,
 		Pretty:   &base.BareTree{}, // TODO(b5): finish pretty tree
@@ -465,12 +466,12 @@ func (t *rootTree) AsLink() mdstore.Link {
 }
 func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(
-		// mdstore.LinkFromNode(r.Pretty, FileHierarchyNamePretty, false),
-		mdstore.LinkFromNode(r.Public, FileHierarchyNamePublic, false),
-		mdstore.LinkFromNode(r.Private, FileHierarchyNamePrivate, false),
+		// mdstore.Link{Cid: r.Pretty, Size: r.Pretty.Size(), Name: FileHierarchyNamePretty},
+		mdstore.Link{Cid: r.Public.Cid(), Size: r.Public.Size(), Name: FileHierarchyNamePublic},
+		mdstore.Link{Cid: r.Private.Cid(), Size: r.Private.Size(), Name: FileHierarchyNamePrivate},
 	)
-	if !r.id.Equals(cid.Undef) {
-		links.Add(mdstore.LinkFromNode(r, PreviousLinkName, false))
+	if r.previous != nil && !r.id.Equals(cid.Undef) {
+		links.Add(mdstore.Link{Cid: *r.previous, Name: PreviousLinkName})
 	}
 	return links
 }
@@ -623,4 +624,50 @@ func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
 
 func (r *rootTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
 	return base.MergeResult{}, fmt.Errorf("unfinished: root tree MergeDiverged")
+}
+
+func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
+	a, ok := aFs.(*fileSystem)
+	if !ok {
+		return result, fmt.Errorf("'a' is not a wnfs filesystem")
+	}
+	b, ok := bFs.(*fileSystem)
+	if !ok {
+		return result, fmt.Errorf("'b' is not a wnfs filesystem")
+	}
+	log.Debugw("Merge", "acid", a.Cid(), "bcid", b.Cid())
+
+	if a.root.Public != nil && b.root.Public != nil {
+		res, err := public.Merge(a.root.Public, b.root.Public)
+		if err != nil {
+			return result, err
+		}
+		log.Debugw("merged public", "result", res.Cid)
+		fmt.Printf("/public:\t%s\n", res.Type)
+		a.root.Public, err = public.LoadTreeFromCID(a.root.fs, FileHierarchyNamePublic, res.Cid)
+		if err != nil {
+			return base.MergeResult{}, err
+		}
+	}
+	// if a.root.Private != nil && b.root.Private != nil {
+	// 	res, err := private.Merge(a.root.Private, b.root.Private)
+	// 	if err != nil {
+	// 		return result, err
+	// 	}
+	// 	log.Debugw("merged private", "result", res.Cid)
+	// 	fmt.Printf("/private:\t%s\n", res.Type)
+	// 	pk := &private.Key{}
+	// 	if err := pk.Decode(res.Key); err != nil {
+	// 		return result, err
+	// 	}
+	// 	a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
+	// 	if err != nil {
+	// 		return result, err
+	// 	}
+	// }
+
+	_, err = a.root.Put()
+
+	// TODO(b5): populate result
+	return result, nil
 }

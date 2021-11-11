@@ -120,6 +120,7 @@ func TestBasicTreeMerge(t *testing.T) {
 		a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 
 		b := NewEmptyTree(fs, "")
+		b.Add(base.MustPath("some_other_fs.txt"), base.NewMemfileBytes("some_other_fs.txt", []byte("some other filesystem")))
 
 		res, err := Merge(a, b)
 		require.Nil(t, err)
@@ -187,7 +188,7 @@ func TestTreeMergeCommit(t *testing.T) {
 		assert.Equal(t, base.MTMergeCommit, res.Type)
 		a, err = LoadTreeFromCID(fs, "", res.Cid)
 		require.Nil(t, err)
-		assert.NotNil(t, a.merge)
+		assert.NotNil(t, a.h.Merge)
 		mustDirChildren(t, a, []string{
 			"bonjour.txt",
 			"goodbye.txt",

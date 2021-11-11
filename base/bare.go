@@ -23,8 +23,7 @@ type BareFile struct {
 }
 
 var (
-	_ mdstore.DagNode = (*BareFile)(nil)
-	_ fs.File         = (*BareFile)(nil)
+	_ fs.File = (*BareFile)(nil)
 )
 
 func NewBareFile(store mdstore.MerkleDagStore, name string, r io.Reader) *BareFile {
@@ -86,9 +85,8 @@ type BareTree struct {
 }
 
 var (
-	_ mdstore.DagNode = (*BareTree)(nil)
-	_ fs.File         = (*BareTree)(nil)
-	_ fs.ReadDirFile  = (*BareTree)(nil)
+	_ fs.File        = (*BareTree)(nil)
+	_ fs.ReadDirFile = (*BareTree)(nil)
 )
 
 func BareTreeFromCid(ctx context.Context, store mdstore.MerkleDagStore, name string, id cid.Cid) (*BareTree, error) {

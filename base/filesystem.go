@@ -23,6 +23,8 @@ const (
 // reads/writes
 const LatestVersion = SemVer("2.0.0dev")
 
+var ErrNoLink = fmt.Errorf("no link")
+
 type MerkleDagFS interface {
 	fs.FS
 	Context() context.Context
@@ -32,6 +34,7 @@ type MerkleDagFS interface {
 type PrivateMerkleDagFS interface {
 	Context() context.Context
 	HAMT() *hamt.Node
+	HAMTCid() *cid.Cid
 	PrivateStore() mdstore.PrivateStore
 }
 
@@ -40,10 +43,6 @@ type Node interface {
 	Cid() cid.Cid
 	AsHistoryEntry() HistoryEntry
 	AsLink() mdstore.Link
-
-	// Merge a remote node, assumed node is aligned between local & remote tree,
-	// and two nodes have a diverged history
-	MergeDiverged(remote Node) (MergeResult, error)
 }
 
 type File interface {
@@ -108,6 +107,18 @@ func NodeFS(n Node) (MerkleDagFS, error) {
 		return nil, err
 	}
 	mdfs, ok := st.Sys().(MerkleDagFS)
+	if !ok {
+		return nil, fmt.Errorf("node Sys is not a MerkleDagFS")
+	}
+	return mdfs, nil
+}
+
+func PrivateNodeFS(n Node) (PrivateMerkleDagFS, error) {
+	st, err := n.Stat()
+	if err != nil {
+		return nil, err
+	}
+	mdfs, ok := st.Sys().(PrivateMerkleDagFS)
 	if !ok {
 		return nil, fmt.Errorf("node Sys is not a MerkleDagFS")
 	}

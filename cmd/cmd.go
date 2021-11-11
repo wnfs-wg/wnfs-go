@@ -7,13 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dustin/go-humanize"
-	"github.com/ipfs/go-cid"
+	humanize "github.com/dustin/go-humanize"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
-	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
-	"github.com/qri-io/wnfs-go/fsdiff"
-	"github.com/qri-io/wnfs-go/mdstore"
+	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -23,70 +20,18 @@ func init() {
 	}
 }
 
-func open(ctx context.Context) (wnfs.WNFS, mdstore.MerkleDagStore, *ExternalState) {
-	ipfsPath := os.Getenv("IPFS_PATH")
-	if ipfsPath == "" {
-		dir, err := configDirPath()
-		if err != nil {
-			errExit("error: getting configuration directory: %s\n", err)
-		}
-		ipfsPath = filepath.Join(dir, "ipfs")
-
-		if _, err := os.Stat(filepath.Join(ipfsPath, "config")); os.IsNotExist(err) {
-			if err := os.MkdirAll(ipfsPath, 0755); err != nil {
-				errExit("error: creating ipfs repo: %s\n", err)
-			}
-			fmt.Printf("creating ipfs repo at %s ... ", ipfsPath)
-			if err = wnipfs.InitRepo(ipfsPath, ""); err != nil {
-				errExit("\nerror: %s", err)
-			}
-			fmt.Println("done")
-		}
-	}
-
-	store, err := wnipfs.NewFilesystem(ctx, map[string]interface{}{
-		"path": ipfsPath,
-	})
-
-	if err != nil {
-		errExit("error: opening IPFS repo: %s\n", err)
-	}
-
-	statePath, err := ExternalStatePath()
-	if err != nil {
-		errExit("error: getting state path: %s\n", err)
-	}
-	state, err := LoadOrCreateExternalState(ctx, statePath)
-	if err != nil {
-		errExit("error: loading external state: %s\n", err)
-	}
-
-	var fs wnfs.WNFS
-	if state.RootCID.Equals(cid.Cid{}) {
-		fmt.Printf("creating new wnfs filesystem...")
-		if fs, err = wnfs.NewEmptyFS(ctx, store, state.RatchetStore(), state.RootKey); err != nil {
-			errExit("error: creating empty WNFS: %s\n", err)
-		}
-		fmt.Println("done")
-	} else {
-		if fs, err = wnfs.FromCID(ctx, store, state.RatchetStore(), state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
-			errExit("error: opening WNFS CID %s:\n%s\n", state.RootCID, err.Error())
-		}
-	}
-
-	return fs, store, state
-}
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var (
-		fs                  wnfs.WNFS
-		store               mdstore.MerkleDagStore
-		state               *ExternalState
-		updateExternalState func()
-	)
+	// var (
+	// 	fs         wnfs.WNFS
+	// 	store      mdstore.MerkleDagStore
+	// 	state      *Repo
+	// 	updateRepo func()
+	// )
+
+	var repo *Repo
 
 	app := &cli.App{
 		Flags: []cli.Flag{
@@ -96,35 +41,21 @@ func main() {
 				Usage:   "print verbose output",
 			},
 		},
-		Before: func(c *cli.Context) error {
+		Before: func(c *cli.Context) (err error) {
 			if c.Bool("verbose") {
 				golog.SetLogLevel("wnfs", "debug")
 			}
 
-			fs, store, state = open(ctx)
-			updateExternalState = func() {
-				state.RootCID = fs.Cid()
-				state.RootKey = fs.RootKey()
-				var err error
-				state.PrivateRootName, err = fs.PrivateName()
-				if err != nil {
-					errExit("error: reading private name: %s\n", err)
-				}
-				fmt.Printf("writing root cid: %s...", state.RootCID)
-				if err := state.Write(); err != nil {
-					errExit("error: writing external state: %s\n", err)
-				}
-				fmt.Println("done")
-			}
-
-			return nil
+			repo, err = OpenRepo(ctx)
+			return err
 		},
 		Commands: []*cli.Command{
 			{
 				Name:  "mkdir",
 				Usage: "create a directory",
 				Action: func(c *cli.Context) error {
-					defer updateExternalState()
+					defer repo.Close()
+					fs := repo.WNFS()
 					return fs.Mkdir(c.Args().Get(0), wnfs.MutationOptions{
 						Commit: true,
 					})
@@ -134,6 +65,7 @@ func main() {
 				Name:  "cat",
 				Usage: "cat a file",
 				Action: func(c *cli.Context) error {
+					fs := repo.WNFS()
 					data, err := fs.Cat(c.Args().Get(0))
 					if err != nil {
 						return err
@@ -154,7 +86,8 @@ func main() {
 						return err
 					}
 
-					defer updateExternalState()
+					defer repo.Close()
+					fs := repo.WNFS()
 					return fs.Write(path, f, wnfs.MutationOptions{
 						Commit: true,
 					})
@@ -174,7 +107,8 @@ func main() {
 					localFS := os.DirFS(filepath.Dir(localPath))
 					path := filepath.Base(localPath)
 
-					defer updateExternalState()
+					defer repo.Close()
+					fs := repo.WNFS()
 					return fs.Cp(wnfsPath, path, localFS, wnfs.MutationOptions{
 						Commit: true,
 					})
@@ -184,6 +118,7 @@ func main() {
 				Name:  "ls",
 				Usage: "list the contents of a directory",
 				Action: func(c *cli.Context) error {
+					fs := repo.WNFS()
 					entries, err := fs.Ls(c.Args().Get(0))
 					if err != nil {
 						return err
@@ -200,6 +135,7 @@ func main() {
 				Aliases: []string{"history"},
 				Usage:   "show the history of a path",
 				Action: func(c *cli.Context) error {
+					fs := repo.WNFS()
 					entries, err := fs.History(c.Args().Get(0), -1)
 					if err != nil {
 						return err
@@ -217,7 +153,8 @@ func main() {
 				Name:  "rm",
 				Usage: "remove files and directories",
 				Action: func(c *cli.Context) error {
-					defer updateExternalState()
+					defer repo.Close()
+					fs := repo.WNFS()
 					return fs.Rm(c.Args().Get(0), wnfs.MutationOptions{
 						Commit: true,
 					})
@@ -228,6 +165,7 @@ func main() {
 				Usage: "show a tree rooted at a given path",
 				Action: func(c *cli.Context) error {
 					path := c.Args().Get(0)
+					fs := repo.WNFS()
 					// TODO(b5): can't yet create tree from wnfs root.
 					// for now replace empty string with "public"
 					if path == "" {
@@ -249,6 +187,7 @@ func main() {
 				Action: func(c *cli.Context) error {
 					cmdCtx, cancel := context.WithCancel(ctx)
 					defer cancel()
+					fs := repo.WNFS()
 
 					entries, err := fs.History(".", 2)
 					if err != nil {
@@ -264,9 +203,9 @@ func main() {
 						return err
 					}
 
-					prev, err := wnfs.FromCID(cmdCtx, store, state.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
+					prev, err := wnfs.FromCID(cmdCtx, repo.DagStore(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
 					if err != nil {
-						errExit("error: opening previous WNFS %s:\n%s\n", state.RootCID, err.Error())
+						errExit("error: opening previous WNFS %s:\n%s\n", entries[1].Cid, err.Error())
 					}
 
 					diff, err := fsdiff.Unix("", "", fs, prev)
@@ -282,7 +221,25 @@ func main() {
 				Name:  "merge",
 				Usage: "",
 				Action: func(c *cli.Context) error {
-					return nil
+					a := repo.WNFS()
+					cmdCtx, cancel := context.WithCancel(ctx)
+					defer cancel()
+
+					path := c.Args().Get(0)
+					if filepath.Base(path) != repoDirname {
+						path = filepath.Join(path, repoDirname)
+					}
+					fmt.Printf("reading wnfs repo from %q ...", path)
+					bRepo, err := OpenRepoPath(cmdCtx, path)
+					if err != nil {
+						return err
+					}
+					b := bRepo.WNFS()
+					fmt.Printf("done\n")
+
+					defer repo.Close()
+					_, err = wnfs.Merge(a, b)
+					return err
 				},
 			},
 		},

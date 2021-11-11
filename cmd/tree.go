@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"github.com/dustin/go-humanize"
-	"github.com/xlab/treeprint"
+	humanize "github.com/dustin/go-humanize"
+	treeprint "github.com/xlab/treeprint"
 )
 
 func treeString(fsys fs.FS, path string) (string, error) {
