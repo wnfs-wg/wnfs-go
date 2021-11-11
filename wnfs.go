@@ -649,22 +649,22 @@ func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
 			return base.MergeResult{}, err
 		}
 	}
-	// if a.root.Private != nil && b.root.Private != nil {
-	// 	res, err := private.Merge(a.root.Private, b.root.Private)
-	// 	if err != nil {
-	// 		return result, err
-	// 	}
-	// 	log.Debugw("merged private", "result", res.Cid)
-	// 	fmt.Printf("/private:\t%s\n", res.Type)
-	// 	pk := &private.Key{}
-	// 	if err := pk.Decode(res.Key); err != nil {
-	// 		return result, err
-	// 	}
-	// 	a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
-	// 	if err != nil {
-	// 		return result, err
-	// 	}
-	// }
+	if a.root.Private != nil && b.root.Private != nil {
+		res, err := private.Merge(a.root.Private, b.root.Private)
+		if err != nil {
+			return result, err
+		}
+		log.Debugw("merged private", "result", res.Cid)
+		fmt.Printf("/private:\t%s\n", res.Type)
+		pk := &private.Key{}
+		if err := pk.Decode(res.Key); err != nil {
+			return result, err
+		}
+		a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
+		if err != nil {
+			return result, err
+		}
+	}
 
 	_, err = a.root.Put()
 
