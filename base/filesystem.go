@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 
-	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	cid "github.com/ipfs/go-cid"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
@@ -31,18 +30,12 @@ type MerkleDagFS interface {
 	DagStore() mdstore.MerkleDagStore
 }
 
-type PrivateMerkleDagFS interface {
-	Context() context.Context
-	HAMT() *hamt.Node
-	HAMTCid() *cid.Cid
-	PrivateStore() mdstore.PrivateStore
-}
-
 type Node interface {
 	fs.File
 	Cid() cid.Cid
 	AsHistoryEntry() HistoryEntry
 	AsLink() mdstore.Link
+	History(ctx context.Context, limit int) ([]HistoryEntry, error)
 }
 
 type File interface {
@@ -57,8 +50,6 @@ type Tree interface {
 	Copy(path Path, srcPath string, src fs.FS) (PutResult, error)
 	Rm(path Path) (PutResult, error)
 	Mkdir(path Path) (PutResult, error)
-
-	History(path Path, limit int) ([]HistoryEntry, error)
 }
 
 type PutResult interface {
@@ -107,18 +98,6 @@ func NodeFS(n Node) (MerkleDagFS, error) {
 		return nil, err
 	}
 	mdfs, ok := st.Sys().(MerkleDagFS)
-	if !ok {
-		return nil, fmt.Errorf("node Sys is not a MerkleDagFS")
-	}
-	return mdfs, nil
-}
-
-func PrivateNodeFS(n Node) (PrivateMerkleDagFS, error) {
-	st, err := n.Stat()
-	if err != nil {
-		return nil, err
-	}
-	mdfs, ok := st.Sys().(PrivateMerkleDagFS)
 	if !ok {
 		return nil, fmt.Errorf("node Sys is not a MerkleDagFS")
 	}

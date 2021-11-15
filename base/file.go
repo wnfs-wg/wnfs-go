@@ -15,45 +15,6 @@ import (
 
 var Timestamp = time.Now
 
-type treeInfo struct {
-	name string // must be obtained from parent, match link name
-
-	metadata Metadata
-	previous *cid.Cid
-	skeleton Skeleton
-	userland cid.Cid
-}
-
-var (
-	_ TreeHeader = (*treeInfo)(nil)
-	_ Info       = (*treeInfo)(nil)
-)
-
-func (ti treeInfo) Stat() (fs.FileInfo, error) {
-	return &FSFileInfo{
-		name: ti.name,
-		// size: ti.,
-		mtime: time.Unix(int64(ti.metadata.UnixMeta.Mtime), 0),
-	}, nil
-}
-
-func (ti treeInfo) Metadata() Metadata { return ti.metadata }
-func (ti treeInfo) Previous() *cid.Cid { return ti.previous }
-func (ti treeInfo) Skeleton() Skeleton { return ti.skeleton }
-func (ti treeInfo) Userland() cid.Cid  { return ti.userland }
-
-type fileInfo struct {
-	metadata Metadata
-	previous *cid.Cid
-	userland cid.Cid
-}
-
-var _ Info = (*fileInfo)(nil)
-
-func (fi fileInfo) Metadata() Metadata { return fi.metadata }
-func (fi fileInfo) Previous() *cid.Cid { return fi.previous }
-func (fi fileInfo) Userland() cid.Cid  { return fi.userland }
-
 type FileInfo interface {
 	fs.FileInfo
 	Cid() cid.Cid

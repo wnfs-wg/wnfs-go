@@ -37,7 +37,7 @@ type WNFS interface {
 	PrivateFS
 
 	Cid() cid.Cid
-	History(pathStr string, generations int) ([]HistoryEntry, error)
+	History(ctx context.Context, pathStr string, generations int) ([]HistoryEntry, error)
 }
 
 type PosixFS interface {
@@ -314,7 +314,7 @@ func (fsys *fileSystem) Rm(pathStr string, opts ...MutationOptions) error {
 	return nil
 }
 
-func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error) {
+func (fsys *fileSystem) History(ctx context.Context, pathStr string, max int) ([]HistoryEntry, error) {
 	if pathStr == "." || pathStr == "" {
 		return fsys.root.history(max)
 	}
@@ -323,7 +323,17 @@ func (fsys *fileSystem) History(pathStr string, max int) ([]HistoryEntry, error)
 		return nil, err
 	}
 
-	return node.History(relPath, max)
+	f, err := node.Get(relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	ch, ok := f.(base.Node)
+	if !ok {
+		return nil, fmt.Errorf("path %q is not a node", pathStr)
+	}
+
+	return ch.History(ctx, max)
 }
 
 func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree, relPath base.Path, err error) {
@@ -350,7 +360,7 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 
 type rootTree struct {
 	fs     base.MerkleDagFS
-	pstore mdstore.PrivateStore
+	pstore private.Store
 	id     cid.Cid
 	size   int64
 
@@ -369,7 +379,7 @@ func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (*root
 		Pretty: &base.BareTree{},
 	}
 
-	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice(), rs)
+	privStore, err := private.NewStore(context.TODO(), fs.DagStore().Blockservice(), rs)
 	if err != nil {
 		return nil, err
 	}
@@ -405,15 +415,20 @@ func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootK
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
 
-	privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice(), rs)
-	if err != nil {
-		return nil, err
-	}
+	// privStore, err := mdstore.NewPrivateStore(fs.Context(), fs.DagStore().Blockservice(), rs)
 
-	var privateRoot *private.Root
+	var (
+		privateRoot *private.Root
+		privStore   private.Store
+	)
 
 	if hamtLink := links.Get(FileHierarchyNamePrivate); hamtLink != nil {
-		privateRoot, err = private.LoadRoot(fs.Context(), privStore, FileHierarchyNamePrivate, hamtLink.Cid, rootKey, rootName)
+		privStore, err = private.LoadStore(context.TODO(), fs.DagStore().Blockservice(), rs, hamtLink.Cid)
+		if err != nil {
+			return nil, err
+		}
+
+		privateRoot, err = private.LoadRoot(fs.Context(), privStore, FileHierarchyNamePrivate, rootKey, rootName)
 		if err != nil {
 			return nil, fmt.Errorf("opening private tree:\n%w", err)
 		}
@@ -566,7 +581,7 @@ func (r *rootTree) AsHistoryEntry() base.HistoryEntry {
 	return ent
 }
 
-func (r *rootTree) History(base.Path, int) ([]base.HistoryEntry, error) {
+func (r *rootTree) History(context.Context, int) ([]base.HistoryEntry, error) {
 	return nil, fmt.Errorf("unfinished: root tree History method")
 }
 
@@ -580,7 +595,7 @@ func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
 
 	var privHist []base.HistoryEntry
 	if r.Private != nil {
-		if privHist, err = r.Private.History(base.Path{}, -1); err != nil {
+		if privHist, err = r.Private.History(ctx, -1); err != nil {
 			return hist, err
 		}
 		if len(privHist) >= 1 {
@@ -650,7 +665,7 @@ func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
 		}
 	}
 	if a.root.Private != nil && b.root.Private != nil {
-		res, err := private.Merge(a.root.Private, b.root.Private)
+		res, err := private.Merge(context.TODO(), a.root.Private, b.root.Private)
 		if err != nil {
 			return result, err
 		}
@@ -660,7 +675,7 @@ func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
 		if err := pk.Decode(res.Key); err != nil {
 			return result, err
 		}
-		a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *res.HamtRoot, *pk, private.Name(res.PrivateName))
+		a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *pk, private.Name(res.PrivateName))
 		if err != nil {
 			return result, err
 		}

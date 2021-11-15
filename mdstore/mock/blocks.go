@@ -54,7 +54,10 @@ func (mb *memBlockstore) GetSize(cid.Cid) (int, error) {
 // PutMany puts a slice of blocks at the same time using batching
 // capabilities of the underlying datastore whenever possible.
 func (mb *memBlockstore) PutMany(bs []block.Block) error {
-	return fmt.Errorf("unfinished: memBlockstore.PutMany")
+	for _, blk := range bs {
+		mb.data[blk.Cid()] = blk
+	}
+	return nil
 }
 
 // AllKeysChan returns a channel from which
@@ -66,6 +69,7 @@ func (mb *memBlockstore) AllKeysChan(ctx context.Context) (<-chan cid.Cid, error
 		for id := range mb.data {
 			cids <- id
 		}
+		close(cids)
 	}()
 	return cids, nil
 }

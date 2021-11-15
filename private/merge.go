@@ -5,16 +5,17 @@ import (
 	"errors"
 	"fmt"
 
-	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
-	"github.com/ipfs/go-cid"
 	base "github.com/qri-io/wnfs-go/base"
 	"github.com/qri-io/wnfs-go/mdstore"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
-	cbg "github.com/whyrusleeping/cbor-gen"
 )
 
-func Merge(aNode, bNode base.Node) (result base.MergeResult, err error) {
-	dest, err := base.PrivateNodeFS(aNode)
+func Merge(ctx context.Context, aNode, bNode base.Node) (result base.MergeResult, err error) {
+	dstStore, err := NodeStore(aNode)
+	if err != nil {
+		return result, err
+	}
+	srcStore, err := NodeStore(bNode)
 	if err != nil {
 		return result, err
 	}
@@ -28,16 +29,22 @@ func Merge(aNode, bNode base.Node) (result base.MergeResult, err error) {
 	}
 
 	log.Debugw("Merge", "a", a.Cid(), "b", b.Cid())
-	return merge(dest, a, b)
+	result, err = merge(ctx, dstStore, a, b)
+	if err != nil {
+		return result, err
+	}
+
+	err = MergeHAMTBlocks(ctx, srcStore, dstStore)
+	return result, err
 }
 
-func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeResult, err error) {
+func merge(ctx context.Context, destFS Store, a, b privateNode) (result base.MergeResult, err error) {
 	acid := a.Cid()
 	if a, ok := a.(*Root); ok {
 		// TODO(b5): need to manually fetch cid from HAMT here b/c a.Cid() reports the
 		// CID of the HAMT on the root, not the root dir
 		apn, _ := a.PrivateName()
-		if acid, err = cidFromPrivateName(a.PrivateFS(), apn); err != nil {
+		if acid, err = cidFromPrivateName(ctx, a.PrivateFS(), apn); err != nil {
 			log.Debugw("fetch a root CID", "err", err)
 			return result, err
 		}
@@ -48,7 +55,7 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 		// TODO(b5): need to manually fetch cid from HAMT here b/c a.Cid() reports the
 		// CID of the HAMT on the root, not the root dir
 		bpn, _ := b.PrivateName()
-		bcid, err = cidFromPrivateName(b.PrivateFS(), bpn)
+		bcid, err = cidFromPrivateName(ctx, b.PrivateFS(), bpn)
 		if err != nil {
 			log.Debugw("fetch b root CID", "err", err)
 			return result, err
@@ -89,10 +96,19 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 		return result, err
 	}
 
+	aStore, err := NodeStore(a)
+	if err != nil {
+		return result, err
+	}
+	bStore, err := NodeStore(b)
+	if err != nil {
+		return result, err
+	}
+
 	log.Debugw("merge", "ratchetDistance", ratchetDistance, "a", a.Cid(), "b", b.Cid())
 	if ratchetDistance == 0 {
 		// ratchets are equal & cids are inequal, histories have diverged
-		merged, err := mergeNodes(destFS, a, b, ratchetDistance)
+		merged, err := mergeDivergedNodes(ctx, destFS, a, b, ratchetDistance)
 		if err != nil {
 			return result, err
 		}
@@ -105,7 +121,7 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 		if err != nil {
 			return result, err
 		}
-		localCid, err := cidFromPrivateName(a.PrivateFS(), bPn)
+		localCid, err := cidFromPrivateName(ctx, aStore, bPn)
 		if err != nil {
 			return result, err
 		}
@@ -138,7 +154,7 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 		}
 
 		// cids at matching ratchet positions are inequal, histories have diverged
-		merged, err := mergeNodes(destFS, a, b, ratchetDistance)
+		merged, err := mergeDivergedNodes(ctx, destFS, a, b, ratchetDistance)
 		if err != nil {
 			return result, err
 		}
@@ -153,7 +169,7 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 		return base.MergeResult{}, err
 	}
 
-	remoteCidAtLocalRatchetHead, err := cidFromPrivateName(b.PrivateFS(), pn)
+	remoteCidAtLocalRatchetHead, err := cidFromPrivateName(ctx, bStore, pn)
 	if err != nil {
 		return base.MergeResult{}, err
 	}
@@ -186,46 +202,47 @@ func merge(destFS base.PrivateMerkleDagFS, a, b privateNode) (result base.MergeR
 	}
 
 	// cids at matching ratchet positions are inequal, histories have diverged
-	merged, err := mergeNodes(destFS, a, b, ratchetDistance)
+	merged, err := mergeDivergedNodes(ctx, destFS, a, b, ratchetDistance)
 	if err != nil {
 		return result, err
 	}
 	return toMergeResult(merged, base.MTMergeCommit)
 }
 
-func mergeNodes(destFS base.PrivateMerkleDagFS, a, b privateNode, ratchetDistance int) (merged privateNode, err error) {
+func mergeDivergedNodes(ctx context.Context, destFS Store, a, b privateNode, ratchetDistance int) (merged privateNode, err error) {
 	// if b is preferred over a, switch values
 	if ratchetDistance < 0 || (ratchetDistance == 0 && base.LessCID(b.Cid(), a.Cid())) {
-		log.Debugw("mergeNodes, swapping b <-> a", "ratchetDistance", ratchetDistance, "bIsLess", base.LessCID(b.Cid(), a.Cid()))
+		log.Debugw("mergeDivergedNodes, swapping b <-> a", "ratchetDistance", ratchetDistance, "bIsLess", base.LessCID(b.Cid(), a.Cid()))
 		a, b = b, a
 	}
 
-	if err := mergeHamt(destFS.Context(), destFS.HAMT(), b.PrivateFS().HAMT()); err != nil {
+	bStore, err := NodeStore(b)
+	if err != nil {
+		return nil, err
+	}
+
+	// if err = CopyBlocks(ctx, remInfo.Cid, bStore, destFS); err != nil {
+	// 	return nil, err
+	// }
+
+	if err := destFS.HAMT().Merge(ctx, bStore.HAMT().Root()); err != nil {
 		return nil, err
 	}
 
 	if root, ok := a.(*Root); ok {
-		return mergeRoot(destFS, root, b)
+		return mergeDivergedRoot(ctx, destFS, root, b)
 	}
 
 	aTree, aIsTree := a.(*Tree)
 	bTree, bIsTree := b.(*Tree)
 	if aIsTree && bIsTree {
-		return mergeTrees(destFS, aTree, bTree)
+		return mergeDivergedTrees(ctx, destFS, aTree, bTree)
 	}
 
-	return mergeNode(destFS, a, b)
+	return mergeDivergedNode(ctx, destFS, a, b)
 }
 
-func mergeHamt(ctx context.Context, dst, src *hamt.Node) error {
-	log.Debugw("mergeHamt")
-	return src.ForEach(ctx, func(k string, val *cbg.Deferred) error {
-		_, err := dst.SetIfAbsent(ctx, k, val)
-		return err
-	})
-}
-
-func mergeRoot(destfs base.PrivateMerkleDagFS, a *Root, b privateNode) (*Root, error) {
+func mergeDivergedRoot(ctx context.Context, destfs Store, a *Root, b privateNode) (*Root, error) {
 	var bTree *Tree
 	switch t := b.(type) {
 	case *Tree:
@@ -236,11 +253,16 @@ func mergeRoot(destfs base.PrivateMerkleDagFS, a *Root, b privateNode) (*Root, e
 		return nil, fmt.Errorf("expected a tree or root tree. got: %T", b)
 	}
 
-	if err := mergeHamt(destfs.Context(), destfs.HAMT(), b.PrivateFS().HAMT()); err != nil {
+	bStore, err := NodeStore(b)
+	if err != nil {
 		return nil, err
 	}
 
-	mergedTree, err := mergeTrees(destfs, a.Tree, bTree)
+	if err := destfs.HAMT().Merge(ctx, bStore.HAMT().Root()); err != nil {
+		return nil, err
+	}
+
+	mergedTree, err := mergeDivergedTrees(ctx, destfs, a.Tree, bTree)
 	if err != nil {
 		return nil, err
 	}
@@ -249,11 +271,10 @@ func mergeRoot(destfs base.PrivateMerkleDagFS, a *Root, b privateNode) (*Root, e
 	// dragging a reference to the prior root as the internal filesystem
 	// generally, the root shouldn't be implementing the FS.
 	root := &Root{
-		Tree:        mergedTree,
-		ctx:         destfs.Context(),
-		store:       destfs.PrivateStore(),
-		hamt:        destfs.HAMT(),
-		hamtRootCID: a.hamtRootCID,
+		Tree: mergedTree,
+		// store:       destfs.PrivateStore(),
+		// hamt:        destfs.HAMT(),
+		// hamtRootCID: a.hamtRootCID,
 	}
 
 	putResult, err := root.Put()
@@ -261,23 +282,31 @@ func mergeRoot(destfs base.PrivateMerkleDagFS, a *Root, b privateNode) (*Root, e
 		return nil, err
 	}
 
-	log.Debugw("mergeRoot", "res", putResult)
+	log.Debugw("mergeDivergedRoot", "res", putResult)
 	return root, nil
 }
 
-func mergeTrees(destfs base.PrivateMerkleDagFS, a, b *Tree) (res *Tree, err error) {
-	log.Debugw("mergeTrees", "a.name", a.name, "a", a.cid, "b", b.cid)
-	for remName, remInfo := range b.info.Links {
-		localInfo, existsLocally := a.info.Links[remName]
+func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tree, err error) {
+	log.Debugw("mergeDivergedTrees", "a.name", a.name, "a", a.cid, "b", b.cid)
+	checked := map[string]struct{}{}
+
+	for remName, remInfo := range b.links {
+		localInfo, existsLocally := a.links[remName]
 
 		if !existsLocally {
 			// remote has a file local is missing. Add it.
-			a.info.Links.Add(remInfo)
+			log.Debugw("adding missing remote file", "name", remName, "cid", remInfo.Cid)
+			a.links.Add(remInfo)
+			// if err = CopyBlocks(ctx, remInfo.Cid, b.fs, destfs); err != nil {
+			// 	return nil, err
+			// }
+			checked[remName] = struct{}{}
 			continue
 		}
 
 		if localInfo.Cid.Equals(remInfo.Cid) {
 			// both files are equal. no need to merge
+			checked[remName] = struct{}{}
 			continue
 		}
 
@@ -291,7 +320,7 @@ func mergeTrees(destfs base.PrivateMerkleDagFS, a, b *Tree) (res *Tree, err erro
 			return res, err
 		}
 
-		res, err := merge(destfs, lcl, rem)
+		res, err := merge(ctx, destfs, lcl, rem)
 		if err != nil {
 			return nil, err
 		}
@@ -313,26 +342,29 @@ func mergeTrees(destfs base.PrivateMerkleDagFS, a, b *Tree) (res *Tree, err erro
 			Pointer: Name(res.PrivateName),
 		}
 		log.Debugw("adding link", "link", l)
-		a.info.Links.Add(l)
+		a.links.Add(l)
+		checked[remName] = struct{}{}
 	}
 
-	// TODO(b5): merge fields on private data
-	// t.merge = &remote.cid
-	a.info.Metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	// iterate all of a's files making sure they're present on destFS
+	for aName, aInfo := range a.links {
+		if _, ok := checked[aName]; !ok {
+			log.Debugw("copying blocks for file", "name", aName, "cid", aInfo.Cid)
+			// if err := CopyBlocks(ctx, aInfo.Cid, a.fs, destfs); err != nil {
+			// 	return nil, err
+			// }
+		}
+	}
+
+	a.header.Info.Mtime = base.Timestamp().Unix()
 
 	merged := &Tree{
 		fs:      destfs,
 		ratchet: a.ratchet,
 		name:    a.name,
-		info: TreeInfo{
-			INum:  a.INumber(),
-			Bnf:   a.info.Bnf,
-			Links: a.info.Links,
-			Metadata: &base.Metadata{
-				UnixMeta: a.info.Metadata.UnixMeta,
-				IsFile:   false,
-				Version:  base.LatestVersion,
-			},
+		links:   a.links,
+		header: Header{
+			Info: a.header.Info,
 		},
 	}
 
@@ -340,15 +372,25 @@ func mergeTrees(destfs base.PrivateMerkleDagFS, a, b *Tree) (res *Tree, err erro
 	return merged, err
 }
 
-func mergeNode(destfs base.PrivateMerkleDagFS, a, b privateNode) (result privateNode, err error) {
-	log.Debugw("mergeNode", "a", a.Cid(), "b", b.Cid())
+func mergeDivergedNode(ctx context.Context, destfs Store, a, b privateNode) (result privateNode, err error) {
+	log.Debugw("mergeDivergedNode", "a", a.Cid(), "b", b.Cid())
+
+	// bStore, err := NodeStore(a)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// if err = CopyBlocks(ctx, a.Cid(), bStore, destfs); err != nil {
+	// 	return nil, err
+	// }
+
 	switch t := a.(type) {
 	case *Tree:
 		merged := &Tree{
 			fs:      destfs,
 			cid:     t.cid,
-			info:    t.info,
+			header:  t.header,
 			ratchet: t.ratchet,
+			links:   t.links,
 			name:    t.name,
 		}
 		_, err = merged.Put()
@@ -361,7 +403,7 @@ func mergeNode(destfs base.PrivateMerkleDagFS, a, b privateNode) (result private
 		merged := &File{
 			fs:      destfs,
 			ratchet: t.ratchet,
-			info:    t.info,
+			header:  t.header,
 			name:    t.name,
 			cid:     t.cid,
 			content: t.content,
@@ -376,12 +418,11 @@ func mergeNode(destfs base.PrivateMerkleDagFS, a, b privateNode) (result private
 func toMergeResult(n privateNode, mt base.MergeType) (result base.MergeResult, err error) {
 	log.Debugw("toMergeResult", "node", fmt.Sprintf("%T", n))
 
-	// TODO(b5): factor away privateMerkleDagFS to make this accessible directly
-	// from the passed in privateNode
-	var hamtCid *cid.Cid
-	if root, ok := n.(*Root); ok {
-		hamtCid = root.hamtRootCID
+	store, err := NodeStore(n)
+	if err != nil {
+		return result, err
 	}
+	hamtCID := store.HAMT().CID()
 
 	fi, err := Stat(n)
 	if err != nil {
@@ -401,7 +442,7 @@ func toMergeResult(n privateNode, mt base.MergeType) (result base.MergeResult, e
 		Size:   fi.Size(),
 		IsFile: !fi.IsDir(),
 
-		HamtRoot:    hamtCid,
+		HamtRoot:    &hamtCID,
 		PrivateName: string(pn),
 		Key:         k.Encode(),
 	}, nil

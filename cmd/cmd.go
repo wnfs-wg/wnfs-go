@@ -136,7 +136,7 @@ func main() {
 				Usage:   "show the history of a path",
 				Action: func(c *cli.Context) error {
 					fs := repo.WNFS()
-					entries, err := fs.History(c.Args().Get(0), -1)
+					entries, err := fs.History(context.TODO(), c.Args().Get(0), -1)
 					if err != nil {
 						return err
 					}
@@ -189,7 +189,7 @@ func main() {
 					defer cancel()
 					fs := repo.WNFS()
 
-					entries, err := fs.History(".", 2)
+					entries, err := fs.History(context.TODO(), ".", 2)
 					if err != nil {
 						return err
 					}
