@@ -3,7 +3,6 @@ package cipherfile
 import (
 	"context"
 	"crypto/cipher"
-	"errors"
 	"fmt"
 
 	files "github.com/ipfs/go-ipfs-files"
@@ -36,7 +35,7 @@ func NewCipherFile(ctx context.Context, dserv ipld.DAGService, nd ipld.Node, aut
 
 	case *dag.RawNode:
 	default:
-		return nil, errors.New("unknown node type")
+		return nil, fmt.Errorf("unknown node type: %T", nd)
 	}
 
 	dr, err := NewDagReader(ctx, nd, dserv, auth)

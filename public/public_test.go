@@ -394,7 +394,9 @@ func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
 
 func mustHistCids(t *testing.T, tree *PublicTree, path base.Path) []cid.Cid {
 	t.Helper()
-	log, err := tree.History(path, -1)
+	n, err := tree.Get(path)
+	require.Nil(t, err)
+	log, err := n.(base.Node).History(context.Background(), -1)
 	require.Nil(t, err)
 	ids := make([]cid.Cid, len(log))
 	for i, l := range log {
@@ -402,19 +404,6 @@ func mustHistCids(t *testing.T, tree *PublicTree, path base.Path) []cid.Cid {
 	}
 	return ids
 }
-
-// // TODO(b5): base.Node interface needs work, this and mustHistCids should be one
-// // function
-// func mustHistCidsFile(t *testing.T, root *PublicTree, path base.Path) []cid.Cid {
-// 	t.Helper()
-// 	log, err := root.History(path, -1)
-// 	require.Nil(t, err)
-// 	ids := make([]cid.Cid, len(log))
-// 	for i, l := range log {
-// 		ids[i] = l.Cid
-// 	}
-// 	return ids
-// }
 
 func mustDirChildren(t *testing.T, dir *PublicTree, ch []string) {
 	t.Helper()

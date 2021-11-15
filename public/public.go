@@ -450,19 +450,14 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 	}, nil
 }
 
-func (t *PublicTree) History(path base.Path, max int) ([]base.HistoryEntry, error) {
-	f, err := t.Get(path)
+func (t *PublicTree) History(ctx context.Context, max int) ([]base.HistoryEntry, error) {
+	return history(ctx, t, max)
+}
+func history(ctx context.Context, n base.Node, max int) ([]base.HistoryEntry, error) {
+	store, err := base.NodeFS(n)
 	if err != nil {
 		return nil, err
 	}
-
-	n, ok := f.(base.Node)
-	if !ok {
-		return nil, fmt.Errorf("%s does not support history", path)
-	}
-
-	ctx := t.fs.Context()
-	store := t.fs.DagStore()
 
 	log := []base.HistoryEntry{
 		n.AsHistoryEntry(),
@@ -470,7 +465,7 @@ func (t *PublicTree) History(path base.Path, max int) ([]base.HistoryEntry, erro
 
 	prev := log[0].Previous
 	for prev != nil {
-		ent, err := loadHistoryEntry(ctx, store, *prev)
+		ent, err := loadHistoryEntry(ctx, store.DagStore(), *prev)
 		if err != nil {
 			return nil, err
 		}
@@ -503,10 +498,6 @@ func loadHistoryEntry(ctx context.Context, store mdstore.MerkleDagStore, id cid.
 		ent.Previous = &prvLnk.Cid
 	}
 	return ent, err
-}
-
-func (t *PublicTree) MergeDiverged(n base.Node) (result base.MergeResult, err error) {
-	return result, fmt.Errorf("don't use")
 }
 
 func (t *PublicTree) getOrCreateDirectChildTree(name string) (*PublicTree, error) {
@@ -672,6 +663,10 @@ func (f *PublicFile) AsLink() mdstore.Link {
 	}
 }
 
+func (f *PublicFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
+	return history(ctx, f, maxRevs)
+}
+
 func (f *PublicFile) Read(p []byte) (n int, err error) {
 	f.ensureContent()
 	return f.content.Read(p)
@@ -741,10 +736,6 @@ func (f *PublicFile) AsHistoryEntry() base.HistoryEntry {
 		Metadata: f.metadata,
 		Previous: f.h.Previous,
 	}
-}
-
-func (f *PublicFile) MergeDiverged(b base.Node) (result base.MergeResult, err error) {
-	return result, fmt.Errorf("don't use")
 }
 
 type PutResult struct {

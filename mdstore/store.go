@@ -11,6 +11,7 @@ import (
 	blockservice "github.com/ipfs/go-blockservice"
 	cid "github.com/ipfs/go-cid"
 	cidutil "github.com/ipfs/go-cidutil"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	chunker "github.com/ipfs/go-ipfs-chunker"
 	format "github.com/ipfs/go-ipld-format"
 	golog "github.com/ipfs/go-log"
@@ -203,6 +204,20 @@ func CopyBlocks(ctx context.Context, id cid.Cid, src, dst MerkleDagStore) error 
 	}
 
 	return dst.Blockservice().Blockstore().Put(blk)
+}
+
+func AllKeys(ctx context.Context, bs blockstore.Blockstore) ([]cid.Cid, error) {
+	keys, err := bs.AllKeysChan(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]cid.Cid, 0)
+	for id := range keys {
+		ids = append(ids, id)
+	}
+
+	return ids, nil
 }
 
 type DagNode interface {

@@ -17,6 +17,37 @@ const (
 	UnixNodeTypeHAMTShard = "hamtShard"
 )
 
+const (
+	ModeDefault = 644
+)
+
+type NodeType uint8
+
+const (
+	NTFile NodeType = iota
+	NTDir
+	NTSymlink    // reserved for future use
+	NTUnixFSFile // reserved for future use
+	NTUnixFSDir  // reserved for future use
+)
+
+func (nt NodeType) String() string {
+	switch nt {
+	case NTFile:
+		return "file"
+	case NTDir:
+		return "dir"
+	case NTSymlink:
+		return "symlink"
+	case NTUnixFSFile:
+		return "unixFSFile"
+	case NTUnixFSDir:
+		return "unixFSDir"
+	default:
+		return "unknown"
+	}
+}
+
 type SemVer string
 
 type UnixMeta struct {

@@ -15,6 +15,7 @@ import (
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
+	"github.com/qri-io/wnfs-go/private"
 	"github.com/qri-io/wnfs-go/ratchet"
 	"github.com/stretchr/testify/require"
 )
@@ -588,10 +589,10 @@ func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
 	return store
 }
 
-func newMemTestPrivateStore(ctx context.Context, f fataler) mdstore.PrivateStore {
+func newMemTestPrivateStore(ctx context.Context, f fataler) private.Store {
 	f.Helper()
 	rs := ratchet.NewMemStore(ctx)
-	store, err := mdstore.NewPrivateStore(ctx, mdstoremock.NewOfflineMemBlockservice(), rs)
+	store, err := private.NewStore(ctx, mdstoremock.NewOfflineMemBlockservice(), rs)
 	if err != nil {
 		f.Fatal(err)
 	}

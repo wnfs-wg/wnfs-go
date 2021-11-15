@@ -14,6 +14,7 @@ var ErrRatchetNotFound = fmt.Errorf("ratchet not found")
 type Store interface {
 	PutRatchet(ctx context.Context, name string, ratchet *Spiral) (updated bool, err error)
 	OldestKnownRatchet(ctx context.Context, name string) (*Spiral, error)
+	ForEach(ctx context.Context, visit func(name string, ratchet *Spiral) error) error
 	Flush() error
 }
 
@@ -58,6 +59,19 @@ func (s *ratchetStore) OldestKnownRatchet(ctx context.Context, name string) (*Sp
 		return nil, ErrRatchetNotFound
 	}
 	return got, nil
+}
+
+func (s *ratchetStore) ForEach(ctx context.Context, visit func(name string, r *Spiral) error) error {
+	s.lk.Lock()
+	defer s.lk.Unlock()
+
+	for name, r := range s.cache {
+		if err := visit(name, r); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *ratchetStore) load() error {
