@@ -1030,7 +1030,7 @@ func (pls PrivateLinks) marshalEncryptedBlock(key Key) (blocks.Block, error) {
 		return nil, err
 	}
 
-	log.Debugw("encrypting header info", "key", key.Encode())
+	log.Debugw("encrypting private links", "key", key.Encode())
 	aead, err := newCipher(key[:])
 	if err != nil {
 		return nil, err
@@ -1043,7 +1043,7 @@ func (pls PrivateLinks) marshalEncryptedBlock(key Key) (blocks.Block, error) {
 	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
 	data := append(nonce, ciphertext...)
 
-	hash, err := multihash.Sum(data, multihash.SHA3_256, -1)
+	hash, err := multihash.Sum(data, multihash.SHA2_256, -1)
 
 	return blocks.NewBlockWithCid(data, cid.NewCidV1(cid.Raw, hash))
 }
@@ -1112,7 +1112,7 @@ func (h Header) encryptHeaderBlock(key Key) (blocks.Block, error) {
 		return nil, err
 	}
 
-	log.Debugw("encrypting header info", "key", key.Encode())
+	log.Debugw("encrypting header info block", "key", key.Encode())
 	aead, err := newCipher(key[:])
 	if err != nil {
 		return nil, err
@@ -1132,7 +1132,7 @@ func (h Header) encryptHeaderBlock(key Key) (blocks.Block, error) {
 	if !h.Metadata.Equals(cid.Undef) {
 		header["metadata"] = h.Metadata
 	}
-	return cbornode.WrapObject(header, multihash.SHA3_256, -1)
+	return cbornode.WrapObject(header, multihash.SHA2_256, -1)
 }
 
 func loadHeader(ctx context.Context, s Store, key Key, id cid.Cid) (h Header, err error) {

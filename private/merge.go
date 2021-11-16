@@ -28,13 +28,16 @@ func Merge(ctx context.Context, aNode, bNode base.Node) (result base.MergeResult
 		return result, fmt.Errorf("cannot merge. Node must be private")
 	}
 
+	err = MergeHAMTBlocks(ctx, srcStore, dstStore)
+	if err != nil {
+		return result, err
+	}
+
 	log.Debugw("Merge", "a", a.Cid(), "b", b.Cid())
 	result, err = merge(ctx, dstStore, a, b)
 	if err != nil {
 		return result, err
 	}
-
-	err = MergeHAMTBlocks(ctx, srcStore, dstStore)
 	return result, err
 }
 

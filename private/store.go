@@ -241,9 +241,19 @@ func (h *HAMT) CID() cid.Cid     { return h.cid }
 func (h *HAMT) Root() *hamt.Node { return h.root }
 
 func (h *HAMT) Write(ctx context.Context) error {
+	log.Debugw("HAMT.Write")
 	id, err := h.root.Write(ctx)
 	if err != nil {
 		return err
+	}
+	id2, err := h.store.Put(ctx, h.root)
+	if err != nil {
+		return err
+	}
+	log.Debugw("put hamt root", "cid", id)
+
+	if !id.Equals(id2) {
+		return fmt.Errorf("unequal root IDs: %q != %q", id, id2)
 	}
 	h.cid = id
 	return nil

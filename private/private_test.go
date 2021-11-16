@@ -139,6 +139,41 @@ func TestPrivateLinkBlockCoding(t *testing.T) {
 	assert.Equal(t, links, got)
 }
 
+func TestPrivateBlockWriting(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := newMemTestPrivateStore(ctx, t)
+
+	root, err := NewEmptyRoot(ctx, store, "private", testRootKey)
+	require.Nil(t, err)
+
+	_, err = root.Add(base.MustPath("hi.txt"), base.NewMemfileBytes("hi.txt", []byte("oh hello")))
+	require.Nil(t, err)
+
+	pn, err := root.PrivateName()
+	require.Nil(t, err)
+
+	root, err = LoadRoot(ctx, store, "", root.Key(), pn)
+	require.Nil(t, err)
+
+	allBlocksPresent(t, root.cid, store)
+}
+
+func allBlocksPresent(t *testing.T, id cid.Cid, store Store) {
+	ctx := context.Background()
+	n, err := store.DAGService().Get(ctx, id)
+	require.Nil(t, err)
+
+	log.Debugw("CopyBlocks", "cid", id, "len(links)", len(n.Links()))
+	for _, l := range n.Links() {
+		allBlocksPresent(t, l.Cid, store)
+	}
+
+	_, err = store.Blockservice().Blockstore().Get(id)
+	require.Nil(t, err)
+}
+
 type fataler interface {
 	Name() string
 	Helper()

@@ -109,9 +109,10 @@ func main() {
 
 					defer repo.Close()
 					fs := repo.WNFS()
-					return fs.Cp(wnfsPath, path, localFS, wnfs.MutationOptions{
+					err = fs.Cp(wnfsPath, path, localFS, wnfs.MutationOptions{
 						Commit: true,
 					})
+					return err
 				},
 			},
 			{
@@ -240,6 +241,22 @@ func main() {
 					defer repo.Close()
 					_, err = wnfs.Merge(a, b)
 					return err
+				},
+			},
+			{
+				Name:  "list-blocks",
+				Usage: "",
+				Action: func(c *cli.Context) error {
+					cmdCtx, cancel := context.WithCancel(ctx)
+					defer cancel()
+					keys, err := repo.DagStore().Blockservice().Blockstore().AllKeysChan(cmdCtx)
+					if err != nil {
+						return err
+					}
+					for key := range keys {
+						fmt.Println(key)
+					}
+					return nil
 				},
 			},
 		},

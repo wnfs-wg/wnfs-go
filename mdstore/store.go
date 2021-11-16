@@ -83,8 +83,6 @@ func (mds *merkleDagStore) GetNode(ctx context.Context, id cid.Cid) (DagNode, er
 
 func (mds *merkleDagStore) PutNode(links Links) (PutResult, error) {
 	node := unixfs.EmptyDirNode()
-	// node := &merkledag.ProtoNode{}
-	// node.SetData(unixfs.FolderPBData())
 	node.SetCidBuilder(cid.V1Builder{
 		Codec:    cid.DagProtobuf,
 		MhType:   multihash.SHA2_256,
