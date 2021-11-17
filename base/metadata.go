@@ -25,6 +25,7 @@ type NodeType uint8
 
 const (
 	NTFile NodeType = iota
+	NTDataFile
 	NTDir
 	NTSymlink    // reserved for future use
 	NTUnixFSFile // reserved for future use

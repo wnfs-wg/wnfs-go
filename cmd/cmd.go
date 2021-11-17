@@ -144,7 +144,7 @@ func main() {
 
 					fmt.Println("date\tsize\tcid\tkey\tprivate name")
 					for _, entry := range entries {
-						ts := time.Unix(entry.Metadata.UnixMeta.Mtime, 0)
+						ts := time.Unix(entry.Mtime, 0)
 						fmt.Printf("%s\t%s\t%s\t%s\t%s\n", ts.Format(time.RFC3339), humanize.Bytes(uint64(entry.Size)), entry.Cid, entry.Key, entry.PrivateName)
 					}
 					return nil
@@ -239,7 +239,7 @@ func main() {
 					fmt.Printf("done\n")
 
 					defer repo.Close()
-					_, err = wnfs.Merge(a, b)
+					_, err = wnfs.Merge(cmdCtx, a, b)
 					return err
 				},
 			},

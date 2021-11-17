@@ -1,7 +1,9 @@
 package public
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -9,8 +11,11 @@ import (
 	"path/filepath"
 	"time"
 
+	blocks "github.com/ipfs/go-block-format"
 	cid "github.com/ipfs/go-cid"
+	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
+	"github.com/multiformats/go-multihash"
 	"github.com/qri-io/wnfs-go/base"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
@@ -18,11 +23,7 @@ import (
 var log = golog.Logger("wnfs")
 
 type header struct {
-	cid cid.Cid
-
-	Size    int64
-	Version base.SemVer
-
+	Info     *Info
 	Previous *cid.Cid // historical backpointer
 	Merge    *cid.Cid // if this version is a merge, will be populated
 	Metadata *cid.Cid
@@ -30,37 +31,68 @@ type header struct {
 	Userland *cid.Cid
 }
 
-func loadHeader(s base.MerkleDagFS, id cid.Cid) (*header, error) {
-	n, err := s.DagStore().GetNode(s.Context(), id)
+func loadHeader(ctx context.Context, s mdstore.MerkleDagStore, id cid.Cid) (*header, error) {
+	blk, err := s.Blockservice().GetBlock(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("loading header node %s:\n%w", id, err)
+		return nil, err
 	}
-	links := n.Links()
 
+	return decodeHeaderBlock(blk)
+}
+
+func decodeHeaderBlock(blk blocks.Block) (*header, error) {
+	env := map[string]interface{}{}
+	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
+		return nil, err
+	}
+
+	nd, err := cbornode.DecodeBlock(blk)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Debugw("decodeDataFileBlock", "info", env["info"], "env", env)
+
+	info, ok := env["info"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("header block is missing info field")
+	}
 	h := &header{
-		cid:  id,
-		Size: n.Size(),
-		// TODO(b5)
-		// Version: ___
+		Info: infoFromMap(info),
 	}
 
-	if l := links.Get(base.PreviousLinkName); l != nil {
-		h.Previous = &l.Cid
-	}
-	if l := links.Get(base.MergeLinkName); l != nil {
-		h.Merge = &l.Cid
-	}
-	if l := links.Get(base.MetadataLinkName); l != nil {
-		h.Metadata = &l.Cid
-	}
-	if l := links.Get(base.SkeletonLinkName); l != nil {
-		h.Skeleton = &l.Cid
-	}
-	if l := links.Get(base.UserlandLinkName); l != nil {
-		h.Userland = &l.Cid
+	for _, l := range nd.Links() {
+		log.Debugw("setting link field", "name", l.Name, "cid", l.Cid)
+		switch l.Name {
+		case base.PreviousLinkName:
+			h.Previous = &l.Cid
+		case base.MergeLinkName:
+			h.Merge = &l.Cid
+		case base.MetadataLinkName:
+			h.Metadata = &l.Cid
+		case base.SkeletonLinkName:
+			h.Skeleton = &l.Cid
+		case base.UserlandLinkName:
+			h.Userland = &l.Cid
+		}
 	}
 
 	return h, nil
+}
+
+func (h *header) encodeBlock() (blocks.Block, error) {
+	dataFile := map[string]interface{}{
+		"metadata": h.Metadata,
+		"previous": h.Previous,
+		"merge":    h.Merge,
+		"skeleton": h.Skeleton,
+		"userland": h.Userland,
+	}
+
+	if h.Info != nil {
+		dataFile["info"] = h.Info.Map()
+	}
+	return cbornode.WrapObject(dataFile, multihash.SHA2_256, -1)
 }
 
 func (h *header) loadMetadata(fs base.MerkleDagFS) (*base.Metadata, error) {
@@ -98,20 +130,53 @@ func (h *header) links() mdstore.Links {
 	return links
 }
 
-func (h *header) write(fs base.MerkleDagFS) error {
-	res, err := fs.DagStore().PutNode(h.links())
-	if err != nil {
-		return err
-	}
+type Info struct {
+	WNFS  base.SemVer   `json:"wnfs"`
+	Type  base.NodeType `json:"type"`
+	Mode  uint32        `json:"mode"`
+	Ctime int64         `json:"ctime"`
+	Mtime int64         `json:"mtime"`
+	Size  int64         `json:"size"`
+}
 
-	h.cid = res.Cid
-	h.Size = res.Size
-	return nil
+func (i *Info) Map() map[string]interface{} {
+	return map[string]interface{}{
+		"wnfs":  i.WNFS,
+		"type":  i.Type,
+		"mode":  i.Mode,
+		"ctime": i.Ctime,
+		"mtime": i.Mtime,
+		"size":  i.Size,
+	}
+}
+
+func infoFromMap(m map[string]interface{}) *Info {
+	i := &Info{}
+	if version, ok := m["wnfs"].(string); ok {
+		i.WNFS = base.SemVer(version)
+	}
+	if t, ok := m["type"].(int); ok {
+		i.Type = base.NodeType(t)
+	}
+	if mode, ok := m["mode"].(int); ok {
+		i.Mode = uint32(mode)
+	}
+	if ctime, ok := m["ctime"].(int); ok {
+		i.Ctime = int64(ctime)
+	}
+	if mtime, ok := m["mtime"].(int); ok {
+		i.Mtime = int64(mtime)
+	}
+	if size, ok := m["size"].(int); ok {
+		i.Size = int64(size)
+	}
+	return i
 }
 
 type PublicTree struct {
 	fs   base.MerkleDagFS // embed a reference to store this tree is associated with
 	name string           // directory name, used while linking
+	cid  cid.Cid
 	h    *header
 
 	metadata *base.Metadata
@@ -129,38 +194,42 @@ var (
 )
 
 func NewEmptyTree(fs base.MerkleDagFS, name string) *PublicTree {
+	now := base.Timestamp().Unix()
 	return &PublicTree{
 		fs:   fs,
 		name: name,
-		h:    &header{},
+		h: &header{
+			Info: &Info{
+				WNFS:  base.LatestVersion,
+				Type:  base.NTDir,
+				Mode:  base.ModeDefault,
+				Ctime: now,
+				Mtime: now,
+				Size:  -1,
+			},
+		},
 
 		userland: mdstore.NewLinks(),
-		metadata: &base.Metadata{
-			UnixMeta: base.NewUnixMeta(false),
-			Version:  base.LatestVersion,
-		},
 		skeleton: base.Skeleton{},
 	}
 }
 
-func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree, error) {
-	ctx := fs.Context()
-	log.Debugw("loadTreeFromCID", "name", name, "cid", id)
+func LoadTree(ctx context.Context, fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree, error) {
+	log.Debugw("loadTree", "name", name, "cid", id)
+
+	h, err := loadHeader(ctx, fs.DagStore(), id)
+	if err != nil {
+		return nil, err
+	}
+
+	return treeFromHeader(ctx, fs, h, name, id)
+}
+
+func treeFromHeader(ctx context.Context, fs base.MerkleDagFS, h *header, name string, id cid.Cid) (*PublicTree, error) {
 	store := fs.DagStore()
-
-	h, err := loadHeader(fs, id)
-	if err != nil {
-		return nil, err
-	}
-
-	md, err := h.loadMetadata(fs)
-	if err != nil {
-		return nil, err
-	}
-	if md.IsFile {
+	if h.Info.Type != base.NTDir {
 		return nil, fmt.Errorf("expected file to be a tree")
 	}
-
 	if h.Skeleton == nil {
 		return nil, fmt.Errorf("header is missing %s link", base.SkeletonLinkName)
 	}
@@ -180,9 +249,10 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 	return &PublicTree{
 		fs:   fs,
 		name: name,
-		h:    h,
+		cid:  id,
 
-		metadata: md,
+		h: h,
+		// metadata: md,
 		skeleton: sk,
 		userland: userland.Links(),
 	}, nil
@@ -191,22 +261,22 @@ func LoadTreeFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicTree,
 func (t *PublicTree) Links() mdstore.Links       { return t.userland }
 func (t *PublicTree) Raw() []byte                { return nil }
 func (t *PublicTree) Name() string               { return t.name }
-func (t *PublicTree) Size() int64                { return t.h.Size }
-func (t *PublicTree) ModTime() time.Time         { return time.Unix(t.metadata.UnixMeta.Mtime, 0) }
-func (t *PublicTree) Mode() fs.FileMode          { return fs.FileMode(t.metadata.UnixMeta.Mode) }
+func (t *PublicTree) Size() int64                { return t.h.Info.Size }
+func (t *PublicTree) ModTime() time.Time         { return time.Unix(t.h.Info.Ctime, 0) }
+func (t *PublicTree) Mode() fs.FileMode          { return fs.FileMode(t.h.Info.Mode) }
 func (t *PublicTree) IsDir() bool                { return true }
 func (t *PublicTree) Sys() interface{}           { return t.fs }
 func (t *PublicTree) Store() base.MerkleDagFS    { return t.fs }
-func (t *PublicTree) Cid() cid.Cid               { return t.h.cid }
+func (t *PublicTree) Cid() cid.Cid               { return t.cid }
 func (t *PublicTree) Stat() (fs.FileInfo, error) { return t, nil }
 
 func (t *PublicTree) AsLink() mdstore.Link {
 	return mdstore.Link{
 		Name:   t.name,
-		Cid:    t.h.cid,
-		Size:   t.h.Size,
+		Cid:    t.cid,
+		Size:   t.h.Info.Size,
 		IsFile: false,
-		Mtime:  t.metadata.UnixMeta.Mtime,
+		Mtime:  t.h.Info.Mtime,
 	}
 }
 
@@ -236,6 +306,7 @@ func (t *PublicTree) Skeleton() (base.Skeleton, error) {
 }
 
 func (t *PublicTree) Get(path base.Path) (fs.File, error) {
+	ctx := context.TODO()
 	head, tail := path.Shift()
 	if head == "" {
 		return t, nil
@@ -247,7 +318,7 @@ func (t *PublicTree) Get(path base.Path) (fs.File, error) {
 	}
 
 	if tail != nil {
-		ch, err := LoadTreeFromCID(t.fs, head, link.Cid)
+		ch, err := LoadTree(ctx, t.fs, head, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -257,18 +328,19 @@ func (t *PublicTree) Get(path base.Path) (fs.File, error) {
 	}
 
 	if t.skeleton[head].IsFile {
-		return LoadFileFromCID(t.fs, link.Name, link.Cid)
+		return LoadFile(ctx, t.fs, link.Name, link.Cid)
 	}
 
-	return LoadTreeFromCID(t.fs, link.Name, link.Cid)
+	return LoadTree(ctx, t.fs, link.Name, link.Cid)
 }
 
 func (t *PublicTree) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
-		Metadata: t.metadata,
-		Cid:      t.h.cid,
+		Cid:      t.cid,
 		Previous: t.h.Previous,
-		Size:     t.h.Size,
+		Size:     t.h.Info.Size,
+		Type:     t.h.Info.Type,
+		Mtime:    t.h.Info.Mtime,
 	}
 }
 
@@ -372,6 +444,7 @@ func (t *PublicTree) Copy(path base.Path, srcPathStr string, srcFS fs.FS) (res b
 }
 
 func (t *PublicTree) Rm(path base.Path) (base.PutResult, error) {
+	ctx := context.TODO()
 	head, tail := path.Shift()
 	if head == "" {
 		return PutResult{}, fmt.Errorf("invalid path: empty")
@@ -384,7 +457,7 @@ func (t *PublicTree) Rm(path base.Path) (base.PutResult, error) {
 		if link == nil {
 			return PutResult{}, base.ErrNotFound
 		}
-		child, err := LoadTreeFromCID(t.fs, head, link.Cid)
+		child, err := LoadTree(ctx, t.fs, head, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -410,15 +483,17 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 	}
 	t.h.Userland = &userlandResult.Cid
 
-	metaBuf, err := base.EncodeCBOR(t.metadata)
-	if err != nil {
-		return nil, err
+	if t.metadata != nil {
+		metaBuf, err := base.EncodeCBOR(t.metadata)
+		if err != nil {
+			return nil, err
+		}
+		id, err := store.PutBlock(metaBuf.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		t.h.Metadata = &id
 	}
-	id, err := store.PutBlock(metaBuf.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	t.h.Metadata = &id
 
 	skf, err := t.skeleton.CBORFile()
 	if err != nil {
@@ -430,21 +505,28 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 	}
 	t.h.Skeleton = &res.Cid
 
-	if t.h.cid.Defined() {
+	if t.cid.Defined() {
 		// need to copy CID, as we're about to alter it's value
-		id, _ := cid.Parse(t.h.cid)
+		id, _ := cid.Parse(t.cid)
 		t.h.Previous = &id
 	}
 
-	if err = t.h.write(t.fs); err != nil {
-		return nil, err
+	blk, err := t.h.encodeBlock()
+	if err != nil {
+		return PutResult{}, err
 	}
-	log.Debugw("wrote public tree", "name", t.name, "cid", t.h.cid.String(), "userlandLinkCount", t.userland.Len(), "size", t.h.Size, "prev", t.h.Previous)
+
+	if err := t.fs.DagStore().Blockservice().Blockstore().Put(blk); err != nil {
+		return PutResult{}, err
+	}
+
+	t.cid = blk.Cid()
+	log.Debugw("wrote public tree", "name", t.name, "cid", t.cid.String(), "userlandLinkCount", t.userland.Len(), "size", t.h.Info.Size, "prev", t.h.Previous)
 
 	return PutResult{
-		Cid:      t.h.cid,
-		Size:     t.h.Size,
-		Metadata: *t.h.Metadata,
+		Cid:  t.cid,
+		Size: t.h.Info.Size,
+		// Metadata: *t.h.Metadata,
 		Userland: *t.h.Userland,
 		Skeleton: t.skeleton,
 	}, nil
@@ -453,6 +535,7 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 func (t *PublicTree) History(ctx context.Context, max int) ([]base.HistoryEntry, error) {
 	return history(ctx, t, max)
 }
+
 func history(ctx context.Context, n base.Node, max int) ([]base.HistoryEntry, error) {
 	store, err := base.NodeFS(n)
 	if err != nil {
@@ -481,31 +564,27 @@ func history(ctx context.Context, n base.Node, max int) ([]base.HistoryEntry, er
 }
 
 func loadHistoryEntry(ctx context.Context, store mdstore.MerkleDagStore, id cid.Cid) (base.HistoryEntry, error) {
-	node, err := store.GetNode(ctx, id)
+	h, err := loadHeader(ctx, store, id)
 	if err != nil {
 		return base.HistoryEntry{}, err
 	}
 
-	links := node.Links()
-	ent := base.HistoryEntry{
-		Cid:  id,
-		Size: node.Size(),
-	}
-	if mdLnk := links.Get(base.MetadataLinkName); mdLnk != nil {
-		ent.Metadata, err = base.LoadMetadata(ctx, store, mdLnk.Cid)
-	}
-	if prvLnk := links.Get(base.PreviousLinkName); prvLnk != nil {
-		ent.Previous = &prvLnk.Cid
-	}
-	return ent, err
+	return base.HistoryEntry{
+		Cid:      id,
+		Previous: h.Previous,
+		Type:     h.Info.Type,
+		Mtime:    h.Info.Mtime,
+		Size:     h.Info.Size,
+	}, nil
 }
 
 func (t *PublicTree) getOrCreateDirectChildTree(name string) (*PublicTree, error) {
+	ctx := context.TODO()
 	link := t.userland.Get(name)
 	if link == nil {
 		return NewEmptyTree(t.fs, name), nil
 	}
-	return LoadTreeFromCID(t.fs, name, link.Cid)
+	return LoadTree(ctx, t.fs, name, link.Cid)
 }
 
 func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
@@ -520,6 +599,7 @@ func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, src
 }
 
 func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
+	ctx := context.TODO()
 	dir, ok := f.(fs.ReadDirFile)
 	if !ok {
 		return nil, fmt.Errorf("cannot read directory contents")
@@ -531,7 +611,7 @@ func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.
 
 	var tree *PublicTree
 	if link := t.userland.Get(name); link != nil {
-		tree, err = LoadTreeFromCID(t.fs, name, link.Cid)
+		tree, err = LoadTree(ctx, t.fs, name, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -550,8 +630,9 @@ func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.
 }
 
 func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
+	ctx := context.TODO()
 	if link := t.userland.Get(name); link != nil {
-		previousFile, err := LoadFileFromCID(t.fs, name, link.Cid)
+		previousFile, err := LoadFile(ctx, t.fs, name, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -567,20 +648,21 @@ func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (base.PutRe
 func (t *PublicTree) updateUserlandLink(name string, res base.PutResult) {
 	t.userland.Add(res.ToLink(name))
 	t.skeleton[name] = res.ToSkeletonInfo()
-	t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	t.h.Info.Mtime = base.Timestamp().Unix()
 	t.h.Merge = nil // clear merge field in the case where we're mutating after a merge commit
 }
 
 func (t *PublicTree) removeUserlandLink(name string) {
 	t.userland.Remove(name)
 	delete(t.skeleton, name)
-	t.metadata.UnixMeta.Mtime = base.Timestamp().Unix()
+	t.h.Info.Mtime = base.Timestamp().Unix()
 	t.h.Merge = nil // clear merge field in the case where we're mutating after a merge commit
 }
 
 type PublicFile struct {
 	fs   base.MerkleDagFS
 	name string
+	cid  cid.Cid
 	h    *header
 
 	metadata *base.Metadata
@@ -593,40 +675,45 @@ var (
 )
 
 func NewEmptyFile(fs base.MerkleDagFS, name string, content io.ReadCloser) *PublicFile {
+	now := base.Timestamp().Unix()
 	return &PublicFile{
 		fs:      fs,
 		name:    name,
 		content: content,
-		h:       &header{},
-
-		metadata: &base.Metadata{
-			UnixMeta: base.NewUnixMeta(true),
-			IsFile:   true,
-			Version:  base.LatestVersion,
+		h: &header{
+			Info: &Info{
+				WNFS:  base.LatestVersion,
+				Type:  base.NTFile,
+				Mode:  base.ModeDefault,
+				Ctime: now,
+				Mtime: now,
+				Size:  -1,
+			},
 		},
 	}
 }
 
-func LoadFileFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicFile, error) {
-	store := fs.DagStore()
-	ctx := fs.Context()
-	h, err := loadHeader(fs, id)
-	if err != nil {
-		return nil, err
-	}
-	// header, err := store.GetNode(ctx, id)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("reading file header: %w", err)
-	// }
-	// links := header.Links()
+func LoadFile(ctx context.Context, fs base.MerkleDagFS, name string, id cid.Cid) (*PublicFile, error) {
 
-	// mdLink := links.Get(base.MetadataLinkName)
-	if h.Metadata == nil {
-		return nil, errors.New("header is missing 'metadata' link")
-	}
-	md, err := base.LoadMetadata(ctx, store, *h.Metadata)
+	h, err := loadHeader(ctx, fs.DagStore(), id)
 	if err != nil {
 		return nil, err
+	}
+
+	return fileFromHeader(ctx, fs, h, name, id)
+}
+
+func fileFromHeader(ctx context.Context, fs base.MerkleDagFS, h *header, name string, id cid.Cid) (*PublicFile, error) {
+	var (
+		store = fs.DagStore()
+		md    *base.Metadata
+		err   error
+	)
+
+	if h.Metadata != nil {
+		if md, err = base.LoadMetadata(ctx, store, *h.Metadata); err != nil {
+			return nil, err
+		}
 	}
 
 	if h.Userland == nil {
@@ -634,32 +721,32 @@ func LoadFileFromCID(fs base.MerkleDagFS, name string, id cid.Cid) (*PublicFile,
 	}
 
 	return &PublicFile{
-		fs:   fs,
-		name: name,
-		h:    h,
-
+		fs:       fs,
+		name:     name,
+		cid:      id,
+		h:        h,
 		metadata: md,
 	}, nil
 }
 
 func (f *PublicFile) Links() mdstore.Links       { return mdstore.NewLinks() }
 func (f *PublicFile) Name() string               { return f.name }
-func (f *PublicFile) Size() int64                { return f.h.Size }
-func (f *PublicFile) ModTime() time.Time         { return time.Unix(f.metadata.UnixMeta.Mtime, 0) }
-func (f *PublicFile) Mode() fs.FileMode          { return fs.FileMode(f.metadata.UnixMeta.Mode) }
+func (f *PublicFile) Size() int64                { return f.h.Info.Size }
+func (f *PublicFile) ModTime() time.Time         { return time.Unix(f.h.Info.Mtime, 0) }
+func (f *PublicFile) Mode() fs.FileMode          { return fs.FileMode(f.h.Info.Mode) }
 func (f *PublicFile) IsDir() bool                { return false }
 func (f *PublicFile) Sys() interface{}           { return f.fs }
 func (f *PublicFile) Store() base.MerkleDagFS    { return f.fs }
-func (f *PublicFile) Cid() cid.Cid               { return f.h.cid }
+func (f *PublicFile) Cid() cid.Cid               { return f.cid }
 func (f *PublicFile) Stat() (fs.FileInfo, error) { return f, nil }
 
 func (f *PublicFile) AsLink() mdstore.Link {
 	return mdstore.Link{
 		Name:   f.name,
-		Cid:    f.h.cid,
-		Size:   f.h.Size,
+		Cid:    f.cid,
+		Size:   f.h.Info.Size,
 		IsFile: true,
-		Mtime:  f.metadata.UnixMeta.Mtime,
+		Mtime:  f.h.Info.Mtime,
 	}
 }
 
@@ -700,30 +787,37 @@ func (f *PublicFile) Put() (base.PutResult, error) {
 	}
 	f.h.Userland = &userlandRes.Cid
 
-	buf, err := base.EncodeCBOR(f.metadata)
-	if err != nil {
-		return PutResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
-	}
-	metadataCid, err := store.PutBlock(buf.Bytes())
-	if err != nil {
-		return nil, err
+	if f.metadata != nil {
+		buf, err := base.EncodeCBOR(f.metadata)
+		if err != nil {
+			return PutResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
+		}
+		metadataCid, err := store.PutBlock(buf.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		f.h.Metadata = &metadataCid
 	}
 
-	f.h.Metadata = &metadataCid
 	// add previous reference
-	if f.h.cid.Defined() {
-		f.h.Previous = &f.h.cid
+	if f.cid.Defined() {
+		f.h.Previous = &f.cid
 	}
 
-	if err = f.h.write(f.fs); err != nil {
+	blk, err := f.h.encodeBlock()
+	if err != nil {
+		return nil, err
+	}
+	f.cid = blk.Cid()
+	if err := f.fs.DagStore().Blockservice().Blockstore().Put(blk); err != nil {
 		return nil, err
 	}
 
-	log.Debugw("wrote public file header", "name", f.name, "cid", f.h.cid.String())
+	log.Debugw("wrote public file header", "name", f.name, "cid", f.cid.String())
 	return PutResult{
-		Cid:      f.h.cid,
-		Size:     f.h.Size,
-		Metadata: *f.h.Metadata,
+		Cid:  f.cid,
+		Size: f.h.Info.Size,
+		// Metadata: *f.h.Metadata,
 		Userland: *f.h.Userland,
 		IsFile:   true,
 	}, nil
@@ -731,10 +825,11 @@ func (f *PublicFile) Put() (base.PutResult, error) {
 
 func (f *PublicFile) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
-		Cid:      f.h.cid,
-		Size:     f.h.Size,
-		Metadata: f.metadata,
+		Cid:      f.cid,
 		Previous: f.h.Previous,
+		Mtime:    f.h.Info.Mtime,
+		Type:     f.h.Info.Type,
+		Size:     f.h.Info.Size,
 	}
 }
 
@@ -771,32 +866,238 @@ func (r PutResult) ToSkeletonInfo() base.SkeletonInfo {
 }
 
 // load a public node
-func loadNode(fs base.MerkleDagFS, name string, id cid.Cid) (n base.Node, err error) {
-	ctx := fs.Context()
-	st := fs.DagStore()
-	header, err := st.GetNode(ctx, id)
+func loadNode(ctx context.Context, fs base.MerkleDagFS, name string, id cid.Cid) (n base.Node, err error) {
+
+	h, err := loadHeader(ctx, fs.DagStore(), id)
 	if err != nil {
-		return n, err
-	}
-	metaLink := header.Links().Get(base.MetadataLinkName)
-	if metaLink == nil {
-		return nil, fmt.Errorf("cid %s does not point to a well-formed public header block: missing meta link", id.String())
+		return nil, err
 	}
 
-	md, err := base.LoadMetadata(ctx, st, metaLink.Cid)
-	if err != nil {
-		return n, fmt.Errorf("error loading meta at cid %s: %w", metaLink.Cid, err)
-	}
-	if md.IsFile {
-		return LoadFileFromCID(fs, name, id)
+	if h.Info == nil {
+		return nil, fmt.Errorf("not a valid wnfs header: %q", id)
 	}
 
-	return LoadTreeFromCID(fs, name, id)
+	switch h.Info.Type {
+	case base.NTFile:
+		return fileFromHeader(ctx, fs, h, name, id)
+	case base.NTDataFile:
+		// TODO(b5):
+		blk, err := fs.DagStore().Blockservice().GetBlock(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		df := &DataFile{fs: fs, name: name, cid: id}
+		return decodeDataFileBlock(df, blk)
+	case base.NTDir:
+		return treeFromHeader(ctx, fs, h, name, id)
+	default:
+		return nil, fmt.Errorf("unrecognized node type: %s", h.Info.Type)
+	}
 }
 
-func loadNodeFromSkeletonInfo(fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
+func loadNodeFromSkeletonInfo(ctx context.Context, fs base.MerkleDagFS, name string, info base.SkeletonInfo) (n base.Node, err error) {
 	if info.IsFile {
-		return LoadFileFromCID(fs, name, info.Cid)
+		return LoadFile(ctx, fs, name, info.Cid)
 	}
-	return LoadTreeFromCID(fs, name, info.Cid)
+	return LoadTree(ctx, fs, name, info.Cid)
+}
+
+type DataFile struct {
+	fs   base.MerkleDagFS
+	name string
+	cid  cid.Cid
+
+	Info        *Info
+	Metadata    *cid.Cid
+	Previous    *cid.Cid // historical backpointer
+	content     interface{}
+	jsonContent *bytes.Buffer
+}
+
+var (
+	_ fs.File   = (*DataFile)(nil)
+	_ base.Node = (*DataFile)(nil)
+)
+
+func NewDataFile(fs base.MerkleDagFS, name string, content interface{}) *DataFile {
+	now := base.Timestamp().Unix()
+	return &DataFile{
+		fs:   fs,
+		name: name,
+		Info: &Info{
+			WNFS:  base.LatestVersion,
+			Type:  base.NTDataFile,
+			Mode:  base.ModeDefault,
+			Mtime: now,
+			Ctime: now,
+			Size:  -1,
+		},
+		content: content,
+	}
+}
+
+func LoadDataFile(ctx context.Context, fs base.MerkleDagFS, name string, id cid.Cid) (*DataFile, error) {
+	df := &DataFile{
+		fs:   fs,
+		name: name,
+		cid:  id,
+	}
+
+	blk, err := fs.DagStore().Blockservice().GetBlock(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeDataFileBlock(df, blk)
+}
+
+func decodeDataFileBlock(df *DataFile, blk blocks.Block) (*DataFile, error) {
+	env := map[string]interface{}{}
+	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
+		return nil, err
+	}
+
+	// TODO (b5): links
+	// nd, err := cbornode.DecodeBlock(blk)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// nd.Links()
+
+	log.Debugw("decodeDataFileBlock", "info", env["info"], "env", env)
+
+	if info, ok := env["info"].(map[string]interface{}); ok {
+		df.Info = infoFromMap(info)
+		if df.Info.WNFS == "" {
+			// info MUST have wnfs key present, otherwise it's considered a bare data file
+			df.Info = nil
+			df.content = env
+			return df, nil
+		}
+		df.content = env["content"]
+		return df, nil
+	}
+
+	// if no info block exists, parse as a bare data file
+	df.content = env
+
+	return df, nil
+}
+
+func (df *DataFile) IsBare() bool         { return df.Info == nil }
+func (df *DataFile) Links() mdstore.Links { return mdstore.NewLinks() } // TODO(b5): remove Links method?
+func (df *DataFile) Name() string         { return df.name }
+func (df *DataFile) Size() int64 {
+	if df.Info != nil {
+		return df.Info.Size
+	}
+	return -1
+}
+func (df *DataFile) ModTime() time.Time {
+	if df.Info != nil {
+		return time.Unix(df.Info.Mtime, 0)
+	}
+	return time.Time{}
+}
+func (df *DataFile) Mode() fs.FileMode {
+	if df.Info != nil {
+		return fs.FileMode(df.Info.Mode)
+	}
+	return fs.FileMode(0)
+}
+func (df *DataFile) IsDir() bool                { return false }
+func (df *DataFile) Sys() interface{}           { return df.fs }
+func (df *DataFile) Store() base.MerkleDagFS    { return df.fs }
+func (df *DataFile) Cid() cid.Cid               { return df.cid }
+func (df *DataFile) Stat() (fs.FileInfo, error) { return df, nil }
+
+func (df *DataFile) AsLink() mdstore.Link {
+	return mdstore.Link{
+		Name: df.name,
+		// Cid:    df.h.cid,
+		// Size:   df.h.Size,
+		IsFile: true,
+		// Mtime:  df.metadata.UnixMeta.Mtime,
+	}
+}
+
+func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
+	// TODO(b5): make this base.ErrNoHistory
+	return nil, fmt.Errorf("no history")
+	// TODO(b5): support history
+	// return history(ctx, df, maxRevs)
+}
+
+func (df *DataFile) Read(p []byte) (n int, err error) {
+	df.ensureContent()
+	return df.jsonContent.Read(p)
+}
+
+func (df *DataFile) ensureContent() (err error) {
+	if df.jsonContent == nil {
+		buf := &bytes.Buffer{}
+		// TODO(b5): use faster json lib
+		if err := json.NewEncoder(buf).Encode(df.content); err != nil {
+			return err
+		}
+		df.jsonContent = buf
+	}
+	return nil
+}
+
+func (df *DataFile) Close() error { return nil }
+
+func (df *DataFile) SetContents(data interface{}) {
+	df.content = data
+	df.jsonContent = nil
+}
+
+func (df *DataFile) Put() (result base.PutResult, err error) {
+	if df.cid.Defined() {
+		df.Previous = &df.cid
+	}
+	if df.Info == nil {
+		df.Info = &Info{}
+	}
+
+	blk, err := df.encodeBlock()
+	if err != nil {
+		return result, err
+	}
+	df.cid = blk.Cid()
+
+	if err = df.fs.DagStore().Blockservice().Blockstore().Put(blk); err != nil {
+		return result, err
+	}
+
+	log.Debugw("wrote public data file", "name", df.name, "cid", df.cid.String())
+	return PutResult{
+		Cid:      df.cid,
+		Size:     df.Info.Size,
+		Userland: df.cid,
+		IsFile:   true,
+	}, nil
+}
+
+func (df *DataFile) AsHistoryEntry() base.HistoryEntry {
+	return base.HistoryEntry{
+		Cid:      df.cid,
+		Size:     df.Info.Size,
+		Type:     df.Info.Type,
+		Mtime:    df.Info.Mtime,
+		Previous: df.Previous,
+	}
+}
+
+func (df *DataFile) encodeBlock() (blocks.Block, error) {
+	dataFile := map[string]interface{}{
+		"metadata": df.Metadata,
+		"previous": df.Previous,
+		"content":  df.content,
+	}
+	if df.Info != nil {
+		dataFile["info"] = df.Info.Map()
+	}
+
+	return cbornode.WrapObject(dataFile, multihash.SHA2_256, -1)
 }

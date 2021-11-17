@@ -75,10 +75,11 @@ type Info interface {
 }
 
 type HistoryEntry struct {
-	Cid      cid.Cid   `json:"cid"`
-	Previous *cid.Cid  `json:"previous"`
-	Metadata *Metadata `json:"metadata"`
-	Size     int64     `json:"size"`
+	Cid      cid.Cid  `json:"cid"`
+	Previous *cid.Cid `json:"previous"`
+	Type     NodeType `json:"type"`
+	Mtime    int64    `json:"mtime"`
+	Size     int64    `json:"size"`
 
 	Key         string `json:"key,omitempty"`
 	PrivateName string `json:"privateName,omitempty"`

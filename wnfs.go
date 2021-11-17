@@ -393,6 +393,7 @@ func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (*root
 }
 
 func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (*rootTree, error) {
+	ctx := context.TODO()
 	node, err := fs.DagStore().GetNode(fs.Context(), id)
 	if err != nil {
 		return nil, fmt.Errorf("loading header block %q:\n%w", id.String(), err)
@@ -410,7 +411,7 @@ func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootK
 		return nil, fmt.Errorf("root tree is missing %q link", FileHierarchyNamePublic)
 	}
 
-	public, err := public.LoadTreeFromCID(fs, FileHierarchyNamePublic, publicLink.Cid)
+	public, err := public.LoadTree(ctx, fs, FileHierarchyNamePublic, publicLink.Cid)
 	if err != nil {
 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
 	}
@@ -566,8 +567,7 @@ func (r *rootTree) AsHistoryEntry() base.HistoryEntry {
 	ent := base.HistoryEntry{
 		Cid:  r.id,
 		Size: r.size,
-		// TODO(b5): root needs metadata
-		Metadata: &base.Metadata{UnixMeta: base.NewUnixMeta(false)},
+		// TODO(b5): add missing fields
 		Previous: r.previous,
 	}
 
@@ -613,9 +613,8 @@ func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
 		}
 		ent := base.HistoryEntry{
 			Cid: nd.Cid(),
-			// TODO(b5): metadata on root
-			Metadata: &base.Metadata{UnixMeta: base.NewUnixMeta(false)},
-			Size:     0,
+			// TODO(b5): add missing fields
+			Size: 0,
 		}
 		if lnk := nd.Links().Get(PreviousLinkName); lnk != nil {
 			ent.Previous = &lnk.Cid
@@ -641,7 +640,7 @@ func (r *rootTree) MergeDiverged(n base.Node) (result base.MergeResult, err erro
 	return base.MergeResult{}, fmt.Errorf("unfinished: root tree MergeDiverged")
 }
 
-func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
+func Merge(ctx context.Context, aFs, bFs WNFS) (result base.MergeResult, err error) {
 	a, ok := aFs.(*fileSystem)
 	if !ok {
 		return result, fmt.Errorf("'a' is not a wnfs filesystem")
@@ -653,19 +652,19 @@ func Merge(aFs, bFs WNFS) (result base.MergeResult, err error) {
 	log.Debugw("Merge", "acid", a.Cid(), "bcid", b.Cid())
 
 	if a.root.Public != nil && b.root.Public != nil {
-		res, err := public.Merge(a.root.Public, b.root.Public)
+		res, err := public.Merge(ctx, a.root.Public, b.root.Public)
 		if err != nil {
 			return result, err
 		}
 		log.Debugw("merged public", "result", res.Cid)
 		fmt.Printf("/public:\t%s\n", res.Type)
-		a.root.Public, err = public.LoadTreeFromCID(a.root.fs, FileHierarchyNamePublic, res.Cid)
+		a.root.Public, err = public.LoadTree(ctx, a.root.fs, FileHierarchyNamePublic, res.Cid)
 		if err != nil {
 			return base.MergeResult{}, err
 		}
 	}
 	if a.root.Private != nil && b.root.Private != nil {
-		res, err := private.Merge(context.TODO(), a.root.Private, b.root.Private)
+		res, err := private.Merge(ctx, a.root.Private, b.root.Private)
 		if err != nil {
 			return result, err
 		}
