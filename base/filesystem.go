@@ -6,7 +6,15 @@ import (
 	"io/fs"
 
 	cid "github.com/ipfs/go-cid"
-	"github.com/qri-io/wnfs-go/mdstore"
+	multihash "github.com/multiformats/go-multihash"
+	mdstore "github.com/qri-io/wnfs-go/mdstore"
+)
+
+const (
+	// LatestVersion is the most recent semantic version of WNFS this
+	// implementation reads/writes
+	LatestVersion        = SemVer("2.0.0dev")
+	DefaultMultihashType = multihash.SHA2_256
 )
 
 const (
@@ -19,10 +27,6 @@ const (
 	MergeLinkName    = "merge"
 	UserlandLinkName = "userland"
 )
-
-// LatestVersion is the most recent semantic version of WNFS this implementation
-// reads/writes
-const LatestVersion = SemVer("2.0.0dev")
 
 var ErrNoLink = fmt.Errorf("no link")
 

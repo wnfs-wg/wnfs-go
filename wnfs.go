@@ -13,7 +13,6 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
-	multihash "github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	private "github.com/qri-io/wnfs-go/private"
@@ -362,28 +361,88 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 	}
 }
 
+type rootHeader struct {
+	Info     *public.Info
+	Previous *cid.Cid
+	Metadata *cid.Cid
+	Pretty   *cid.Cid
+	Public   *cid.Cid
+	Private  *cid.Cid
+}
+
+func (h *rootHeader) encodeBlock() (blocks.Block, error) {
+	header := map[string]interface{}{
+		"info":               h.Info.Map(),
+		"metadata":           h.Metadata,
+		"previous":           h.Previous,
+		base.PublicLinkName:  h.Public,
+		base.PrivateLinkName: h.Private,
+	}
+	return cbornode.WrapObject(header, base.DefaultMultihashType, -1)
+}
+
+func decodeRootHeader(blk blocks.Block) (*rootHeader, error) {
+	env := map[string]interface{}{}
+	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
+		return nil, err
+	}
+
+	info, ok := env["info"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("header block is missing info field")
+	}
+	h := &rootHeader{
+		Info: public.InfoFromMap(info),
+	}
+
+	nd, err := cbornode.DecodeBlock(blk)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, l := range nd.Links() {
+		switch l.Name {
+		case base.PreviousLinkName:
+			h.Previous = &l.Cid
+		case base.PublicLinkName:
+			h.Public = &l.Cid
+		case base.PrivateLinkName:
+			h.Private = &l.Cid
+		case base.PrettyLinkName:
+			h.Pretty = &l.Cid
+		case base.MetadataLinkName:
+			h.Metadata = &l.Cid
+		}
+	}
+
+	return h, nil
+}
+
 type rootTree struct {
-	fs     base.MerkleDagFS
-	pstore private.Store
-	id     cid.Cid
+	fs      base.MerkleDagFS
+	pstore  private.Store
+	id      cid.Cid
+	rootKey Key
 
-	info    *public.Info
-	metaCID *cid.Cid
+	h *rootHeader
 
-	previous *cid.Cid
-	Pretty   *base.BareTree
-	Public   *public.PublicTree
-	Private  *private.Root
+	// Pretty   *base.BareTree
+	Public  *public.PublicTree
+	Private *private.Root
 }
 
 var _ base.Tree = (*rootTree)(nil)
 
 func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (root *rootTree, err error) {
 	root = &rootTree{
-		fs:     fs,
+		fs:      fs,
+		rootKey: rootKey,
+
+		h: &rootHeader{
+			Info: public.NewInfo(base.NTDir),
+		},
 		Public: public.NewEmptyTree(fs, FileHierarchyNamePublic),
-		Pretty: &base.BareTree{},
-		info:   public.NewInfo(base.NTDir),
+		// Pretty: &base.BareTree{},
 	}
 
 	root.pstore, err = private.NewStore(context.TODO(), fs.DagStore().Blockservice(), rs)
@@ -399,132 +458,33 @@ func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (root 
 	return root, nil
 }
 
-// func newRootTreeFromCID(fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (*rootTree, error) {
-// 	ctx := context.TODO()
-// 	node, err := fs.DagStore().GetNode(fs.Context(), id)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("loading header block %q:\n%w", id.String(), err)
-// 	}
-
-// 	links := node.Links()
-
-// 	var prev *cid.Cid
-// 	if prevLink := links.Get(PreviousLinkName); prevLink != nil {
-// 		prev = &prevLink.Cid
-// 	}
-
-// 	publicLink := links.Get(FileHierarchyNamePublic)
-// 	if publicLink == nil {
-// 		return nil, fmt.Errorf("root tree is missing %q link", FileHierarchyNamePublic)
-// 	}
-
-// 	public, err := public.LoadTree(ctx, fs, FileHierarchyNamePublic, publicLink.Cid)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, publicLink.Cid, err)
-// 	}
-
-// 	var (
-// 		privateRoot *private.Root
-// 		privStore   private.Store
-// 	)
-
-// 	if hamtLink := links.Get(FileHierarchyNamePrivate); hamtLink != nil {
-// 		privStore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, hamtLink.Cid)
-// 		if err != nil {
-// 			return nil, err
-// 		}
-
-// 		privateRoot, err = private.LoadRoot(fs.Context(), privStore, FileHierarchyNamePrivate, rootKey, rootName)
-// 		if err != nil {
-// 			return nil, fmt.Errorf("opening private root:\n%w", err)
-// 		}
-// 	} else {
-// 		privateRoot, err = private.NewEmptyRoot(fs.Context(), privStore, FileHierarchyNamePrivate, rootKey)
-// 		if err != nil {
-// 			return nil, err
-// 		}
-// 	}
-
-// 	root := &rootTree{
-// 		fs:     fs,
-// 		pstore: privStore,
-// 		id:     id,
-
-// 		info:     public.NewInfo(base.NTDir),
-// 		Public:   pub,
-// 		Pretty:   &base.BareTree{}, // TODO(b5): finish pretty tree
-// 		Private:  privateRoot,
-// 		previous: prev,
-// 	}
-
-// 	return root, nil
-// }
-
-func (r *rootTree) headerBlock() (blocks.Block, error) {
-	header := map[string]interface{}{
-		"info":               r.info.Map(),
-		"metadata":           r.metaCID,
-		"previous":           r.previous,
-		base.PublicLinkName:  r.Public.Cid(),
-		base.PrivateLinkName: r.Private.Cid(),
-	}
-
-	return cbornode.WrapObject(header, multihash.SHA2_256, -1)
-}
-
 func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (r *rootTree, err error) {
-	r = &rootTree{fs: fs, id: id}
+	r = &rootTree{fs: fs, id: id, rootKey: rootKey}
 
-	blk, err := r.fs.DagStore().Blockservice().GetBlock(ctx, id)
+	blk, err := fs.DagStore().Blockservice().GetBlock(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading root header block: %w", err)
 	}
 
-	env := map[string]interface{}{}
-	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
-		return nil, err
+	if r.h, err = decodeRootHeader(blk); err != nil {
+		return nil, fmt.Errorf("decoding root header block: %w", err)
 	}
 
-	info, ok := env["info"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("header block is missing info field")
-	}
-	r.info = public.InfoFromMap(info)
-
-	nd, err := cbornode.DecodeBlock(blk)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, l := range nd.Links() {
-		switch l.Name {
-		case base.PreviousLinkName:
-			r.previous = &l.Cid
-		case base.PublicLinkName:
-			if r.Public, err = public.LoadTree(ctx, fs, FileHierarchyNamePublic, l.Cid); err != nil {
-				return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, l.Cid, err)
-			}
-		case base.PrivateLinkName:
-			if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, l.Cid); err != nil {
-				return nil, err
-			}
-
-			r.Private, err = private.LoadRoot(fs.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName)
-			if err != nil {
-				return nil, fmt.Errorf("opening private root:\n%w", err)
-			}
-
-		case base.PrettyLinkName:
-			// TODO(b5): load pretty directory
-		case base.MetadataLinkName:
-			// TODO(b5): metadata link on root
-			// 	h.Metadata = &l.Cid
+	if r.h.Public != nil {
+		if r.Public, err = public.LoadTree(ctx, fs, FileHierarchyNamePublic, *r.h.Public); err != nil {
+			return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, r.h.Public, err)
 		}
 	}
 
-	if r.pstore == nil {
-		r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, cid.Undef)
-		if err != nil {
+	if r.h.Private != nil {
+		if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, *r.h.Private); err != nil {
+			return nil, err
+		}
+		if r.Private, err = private.LoadRoot(fs.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName); err != nil {
+			return nil, fmt.Errorf("opening private root:\n%w", err)
+		}
+	} else {
+		if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, cid.Undef); err != nil {
 			return nil, err
 		}
 	}
@@ -534,10 +494,21 @@ func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid
 
 func (r *rootTree) Put() (result mdstore.PutResult, err error) {
 	if r.id.Defined() {
-		r.previous = &r.id
+		r.h.Previous = &r.id
 	}
-	r.info.Mtime = base.Timestamp().Unix()
-	blk, err := r.headerBlock()
+	r.h.Info.Mtime = base.Timestamp().Unix()
+	if r.Public != nil {
+		id := r.Public.Cid()
+		r.h.Public = &id
+	}
+	if r.Private != nil {
+		id := r.Private.Cid()
+		r.h.Private = &id
+	}
+
+	// TODO(by): pretty, metadata links on header
+
+	blk, err := r.h.encodeBlock()
 	if err != nil {
 		return result, fmt.Errorf("constructing root header block: %w", err)
 	}
@@ -551,37 +522,47 @@ func (r *rootTree) Put() (result mdstore.PutResult, err error) {
 
 func (r *rootTree) Cid() cid.Cid { return r.id }
 func (r *rootTree) Name() string { return "wnfs" }
-func (r *rootTree) Size() int64  { return r.info.Size }
+func (r *rootTree) Size() int64  { return r.h.Info.Size }
 func (t *rootTree) AsLink() mdstore.Link {
 	return mdstore.Link{
 		Name:   "",
 		Cid:    t.id,
-		Size:   t.info.Size,
-		Mtime:  t.info.Mtime,
+		Size:   t.h.Info.Size,
+		Mtime:  t.h.Info.Mtime,
 		IsFile: false,
 	}
 }
+
 func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(
 		// mdstore.Link{Cid: r.Pretty, Size: r.Pretty.Size(), Name: FileHierarchyNamePretty},
 		mdstore.Link{Cid: r.Public.Cid(), Size: r.Public.Size(), Name: FileHierarchyNamePublic},
 		mdstore.Link{Cid: r.Private.Cid(), Size: r.Private.Size(), Name: FileHierarchyNamePrivate},
 	)
-	if r.previous != nil && !r.id.Equals(cid.Undef) {
-		links.Add(mdstore.Link{Cid: *r.previous, Name: PreviousLinkName})
+	if r.h.Previous != nil && !r.id.Equals(cid.Undef) {
+		links.Add(mdstore.Link{Cid: *r.h.Previous, Name: PreviousLinkName})
 	}
 	return links
 }
 
-func (r *rootTree) Get(path base.Path) (fs.File, error) {
+func (r *rootTree) Get(path base.Path) (f fs.File, err error) {
 	head, tail := path.Shift()
 	log.Debugw("rootTree.Get", "head", head, "path", path)
 	switch head {
 	case "", ".":
 		return r, nil
 	case FileHierarchyNamePublic:
+		if r.Public == nil {
+			r.Public = public.NewEmptyTree(r.fs, FileHierarchyNamePublic)
+		}
 		return r.Public.Get(tail)
 	case FileHierarchyNamePrivate:
+		if r.Private == nil {
+			r.Private, err = private.NewEmptyRoot(r.fs.Context(), r.pstore, FileHierarchyNamePrivate, r.rootKey)
+			if err != nil {
+				return nil, err
+			}
+		}
 		return r.Private.Get(tail)
 	// case FileHierarchyNamePretty:
 	// 	return fsys.root.Pretty, relPath, nil
@@ -647,10 +628,10 @@ func (r *rootTree) Close() error {
 func (r *rootTree) AsHistoryEntry() base.HistoryEntry {
 	ent := base.HistoryEntry{
 		Cid:      r.id,
-		Size:     r.info.Size,
-		Mtime:    r.info.Mtime,
-		Type:     r.info.Type,
-		Previous: r.previous,
+		Size:     r.h.Info.Size,
+		Mtime:    r.h.Info.Mtime,
+		Type:     r.h.Info.Type,
+		Previous: r.h.Previous,
 	}
 
 	if r.Private != nil {
@@ -689,18 +670,22 @@ func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
 	prev := hist[0].Previous
 	i := 0
 	for prev != nil {
-		nd, err := store.GetNode(ctx, *prev)
+		blk, err := store.Blockservice().GetBlock(ctx, *prev)
+		if err != nil {
+			return nil, err
+		}
+		h, err := decodeRootHeader(blk)
 		if err != nil {
 			return nil, err
 		}
 		ent := base.HistoryEntry{
-			Cid: nd.Cid(),
-			// TODO(b5): add missing fields
-			Size: 0,
+			Cid:      *prev,
+			Size:     h.Info.Size,
+			Mtime:    h.Info.Mtime,
+			Type:     h.Info.Type,
+			Previous: h.Previous,
 		}
-		if lnk := nd.Links().Get(PreviousLinkName); lnk != nil {
-			ent.Previous = &lnk.Cid
-		}
+
 		if len(privHist) > i {
 			ent.Key = privHist[i].Key
 			ent.PrivateName = privHist[i].PrivateName

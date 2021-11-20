@@ -15,7 +15,6 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
-	"github.com/multiformats/go-multihash"
 	"github.com/qri-io/wnfs-go/base"
 	"github.com/qri-io/wnfs-go/mdstore"
 )
@@ -92,7 +91,7 @@ func (h *Header) encodeBlock() (blocks.Block, error) {
 	if h.Info != nil {
 		dataFile["info"] = h.Info.Map()
 	}
-	return cbornode.WrapObject(dataFile, multihash.SHA2_256, -1)
+	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
 }
 
 func (h *Header) loadMetadata(fs base.MerkleDagFS) (*base.Metadata, error) {
@@ -245,7 +244,11 @@ func treeFromHeader(ctx context.Context, fs base.MerkleDagFS, h *Header, name st
 	if h.Userland == nil {
 		return nil, fmt.Errorf("header is missing %s link", base.UserlandLinkName)
 	}
-	userland, err := store.GetNode(ctx, *h.Userland)
+	blk, err := store.Blockservice().GetBlock(ctx, *h.Userland)
+	if err != nil {
+		return nil, err
+	}
+	userland, err := mdstore.DecodeLinksBlock(blk)
 	if err != nil {
 		return nil, fmt.Errorf("loading %s data %s:\n%w", base.UserlandLinkName, h.Userland, err)
 	}
@@ -258,7 +261,7 @@ func treeFromHeader(ctx context.Context, fs base.MerkleDagFS, h *Header, name st
 		h: h,
 		// metadata: md,
 		skeleton: sk,
-		userland: userland.Links(),
+		userland: userland,
 	}, nil
 }
 
@@ -480,11 +483,15 @@ func (t *PublicTree) Rm(path base.Path) (base.PutResult, error) {
 func (t *PublicTree) Put() (base.PutResult, error) {
 	store := t.fs.DagStore()
 
-	userlandResult, err := store.PutNode(t.userland)
+	blk, err := t.userland.EncodeBlock()
 	if err != nil {
 		return nil, err
 	}
-	t.h.Userland = &userlandResult.Cid
+	if err = store.Blockservice().Blockstore().Put(blk); err != nil {
+		return nil, err
+	}
+	id := blk.Cid()
+	t.h.Userland = &id
 
 	if t.metadata != nil {
 		metaBuf, err := base.EncodeCBOR(t.metadata)
@@ -514,11 +521,9 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 		t.h.Previous = &id
 	}
 
-	blk, err := t.h.encodeBlock()
-	if err != nil {
+	if blk, err = t.h.encodeBlock(); err != nil {
 		return PutResult{}, err
 	}
-
 	if err := t.fs.DagStore().Blockservice().Blockstore().Put(blk); err != nil {
 		return PutResult{}, err
 	}
@@ -1084,5 +1089,5 @@ func (df *DataFile) encodeBlock() (blocks.Block, error) {
 		dataFile["info"] = df.Info.Map()
 	}
 
-	return cbornode.WrapObject(dataFile, multihash.SHA2_256, -1)
+	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
 }

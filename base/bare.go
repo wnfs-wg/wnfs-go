@@ -89,21 +89,6 @@ var (
 	_ fs.ReadDirFile = (*BareTree)(nil)
 )
 
-func BareTreeFromCid(ctx context.Context, store mdstore.MerkleDagStore, name string, id cid.Cid) (*BareTree, error) {
-	nd, err := store.GetNode(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return &BareTree{
-		store: store,
-		name:  name,
-		id:    id,
-
-		links: nd.Links(),
-	}, nil
-}
-
 func (t *BareTree) Name() string         { return t.name }
 func (t *BareTree) Size() int64          { return t.size }
 func (t *BareTree) Cid() cid.Cid         { return t.id }
