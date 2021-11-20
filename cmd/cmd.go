@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+	"github.com/ipfs/go-cid"
+	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
 	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
@@ -243,18 +246,74 @@ func main() {
 					return err
 				},
 			},
+
+			// plumbing & diagnostic commands
 			{
-				Name:  "list-blocks",
-				Usage: "",
+				Name: "block",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "list",
+						Usage: "",
+						Action: func(c *cli.Context) error {
+							cmdCtx, cancel := context.WithCancel(ctx)
+							defer cancel()
+							keys, err := repo.DagStore().Blockservice().Blockstore().AllKeysChan(cmdCtx)
+							if err != nil {
+								return err
+							}
+							for key := range keys {
+								fmt.Println(key)
+							}
+							return nil
+						},
+					},
+					{
+						Name:  "get",
+						Usage: "",
+						Action: func(c *cli.Context) error {
+							cmdCtx, cancel := context.WithCancel(ctx)
+							defer cancel()
+
+							id, err := cid.Parse(c.Args().Get(0))
+							if err != nil {
+								return err
+							}
+
+							blk, err := repo.DagStore().Blockservice().GetBlock(cmdCtx, id)
+							if err != nil {
+								return err
+							}
+							v := map[string]interface{}{}
+							if err := cbornode.DecodeInto(blk.RawData(), &v); err != nil {
+								return err
+							}
+							d, err := json.Marshal(v)
+							if err != nil {
+								return err
+							}
+							fmt.Println(string(d))
+							return nil
+						},
+					},
+				},
+			},
+			{
+				Name: "hamt",
 				Action: func(c *cli.Context) error {
 					cmdCtx, cancel := context.WithCancel(ctx)
 					defer cancel()
-					keys, err := repo.DagStore().Blockservice().Blockstore().AllKeysChan(cmdCtx)
+
+					id, err := cid.Parse(c.Args().Get(0))
 					if err != nil {
 						return err
 					}
-					for key := range keys {
-						fmt.Println(key)
+
+					diag, err := wnfs.HAMTContents(cmdCtx, repo.DagStore().Blockservice(), id)
+					if err != nil {
+						return err
+					}
+					for k, v := range diag {
+						fmt.Printf("%s\t%s\n", k, v)
 					}
 					return nil
 				},

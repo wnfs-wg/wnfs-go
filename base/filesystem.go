@@ -11,6 +11,8 @@ import (
 
 const (
 	MetadataLinkName = "metadata"
+	PublicLinkName   = "public"
+	PrivateLinkName  = "private"
 	SkeletonLinkName = "skeleton"
 	PrettyLinkName   = "p"
 	PreviousLinkName = "previous"

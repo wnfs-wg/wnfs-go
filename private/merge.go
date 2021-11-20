@@ -270,14 +270,10 @@ func mergeDivergedRoot(ctx context.Context, destfs Store, a *Root, b privateNode
 		return nil, err
 	}
 
-	// TODO(b5): need to fully re-construct here including FS components to avoid
-	// dragging a reference to the prior root as the internal filesystem
-	// generally, the root shouldn't be implementing the FS.
 	root := &Root{
+		// TODO(b5): using the wrong context here:
+		ctx:  ctx,
 		Tree: mergedTree,
-		// store:       destfs.PrivateStore(),
-		// hamt:        destfs.HAMT(),
-		// hamtRootCID: a.hamtRootCID,
 	}
 
 	putResult, err := root.Put()

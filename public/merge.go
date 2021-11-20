@@ -247,10 +247,10 @@ func mergeNode(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (me
 			fs:   destFS,
 			name: a.name,
 			cid:  a.cid,
-			h: &header{
+			h: &Header{
+				Info:     a.h.Info,
 				Merge:    &bid,
 				Previous: &a.cid,
-				Info:     a.h.Info,
 				Metadata: a.h.Metadata,
 				Skeleton: a.h.Skeleton,
 				Userland: a.h.Userland,
@@ -260,7 +260,7 @@ func mergeNode(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (me
 			userland: a.userland,
 		}
 
-		tree.metadata.UnixMeta.Mtime = time.Now().Unix()
+		tree.h.Info.Mtime = time.Now().Unix()
 		_, err := a.Put()
 		return tree, err
 
@@ -273,7 +273,7 @@ func mergeNode(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (me
 			fs:   destFS,
 			name: a.Name(),
 			cid:  a.cid,
-			h: &header{
+			h: &Header{
 				Info:     a.h.Info,
 				Merge:    &bid,
 				Previous: &a.cid,
