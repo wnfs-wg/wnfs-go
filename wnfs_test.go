@@ -153,7 +153,7 @@ func TestMerge(t *testing.T) {
 	err = b.Write(pathStr, f, MutationOptions{Commit: true})
 	require.Nil(t, err)
 
-	res, err := Merge(a, b)
+	res, err := Merge(ctx, a, b)
 	require.Nil(t, err)
 
 	t.Logf("%#v", res)

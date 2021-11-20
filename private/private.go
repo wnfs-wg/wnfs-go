@@ -19,7 +19,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
-	"github.com/multiformats/go-multihash"
+	multihash "github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	public "github.com/qri-io/wnfs-go/public"
@@ -126,8 +126,9 @@ func LoadRoot(ctx context.Context, store Store, name string, rootKey Key, rootNa
 		log.Debugw("LoadRoot find root name in HAMT", "name", string(rootName), "err", err)
 		return nil, fmt.Errorf("opening private root: %w", err)
 	} else if !exists {
-		log.Debugw("LoadRoot: rootName not found in HAMT", "name", string(rootName))
-		return nil, fmt.Errorf("opening private root: %w", base.ErrNotFound)
+		err := fmt.Errorf("finding key %s: %w", string(rootName), base.ErrNotFound)
+		log.Debugw("LoadRoot", "name", string(rootName), "err", err)
+		return nil, err
 	}
 	_, privateRoot, err := cid.CidFromBytes([]byte(data))
 	if err != nil {
@@ -329,8 +330,14 @@ func (pt *Tree) Ratchet() *ratchet.Spiral       { return pt.ratchet }
 func (pt *Tree) BareNamefilter() BareNamefilter { return pt.header.Info.BareNamefilter }
 func (pt *Tree) PrivateFS() Store               { return pt.fs }
 func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
+	n, _ := pt.PrivateName()
 	return base.HistoryEntry{
-		Cid: pt.cid,
+		Cid:         pt.cid,
+		Size:        pt.header.Info.Size,
+		Mtime:       pt.header.Info.Mtime,
+		Type:        pt.header.Info.Type,
+		Key:         pt.Key().Encode(),
+		PrivateName: string(n),
 		// TODO(b5):
 		// Previous: prevCID(pt.fs, pt.ratchet, pt.header.Info.BareNamefilter),
 		// Metadata: pt.info.Metadata,
@@ -581,28 +588,16 @@ func history(ctx context.Context, n privateNode, maxRevs int) ([]base.HistoryEnt
 			return nil, err
 		}
 
-		// f, err := store.GetEncryptedFile(contentID, key[:])
-		// if err != nil {
-		// 	log.Debugw("LoadTree", "err", err)
-		// 	return nil, err
-		// }
-		// defer f.Close()
-
-		// // TODO(b5): using TreeInfo for both files & directories
-		// // info := TreeInfo{}
-		// // if err := cbor.NewDecoder(f).Decode(&info); err != nil {
-		// // 	log.Debugw("LoadTree", "err", err)
-		// // 	return nil, err
-		// // }
 		header, err := loadHeader(ctx, store, key, headerID)
 		if err != nil {
 			log.Debugw("loading historical header", "cid", headerID, "err", err)
 		}
 
 		hist[i] = base.HistoryEntry{
-			Cid: headerID,
-			// Metadata: info.Metadata,
-			Size: header.Info.Size,
+			Cid:   headerID,
+			Size:  header.Info.Size,
+			Type:  header.Info.Type,
+			Mtime: header.Info.Mtime,
 
 			Key:         key.Encode(),
 			PrivateName: string(pn),
@@ -780,7 +775,7 @@ func NewFile(fs Store, parent BareNamefilter, f fs.File) (*File, error) {
 				Mode:  base.ModeDefault,
 				Ctime: md.Ctime,
 				Mtime: md.Mtime,
-				Size:  -1,
+				Size:  0,
 
 				INumber:        in,
 				BareNamefilter: bnf,

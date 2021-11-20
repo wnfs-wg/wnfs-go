@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/fs"
@@ -76,10 +77,16 @@ func NewStore(ctx context.Context, bserv blockservice.BlockService, rs ratchet.S
 	}, nil
 }
 
-func LoadStore(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store, hamtCid cid.Cid) (Store, error) {
-	h, err := LoadHAMT(ctx, bserv.Blockstore(), hamtCid)
-	if err != nil {
-		return nil, err
+func LoadStore(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store, hamtCid cid.Cid) (s Store, err error) {
+	var h *HAMT
+	if hamtCid.Defined() {
+		if h, err = LoadHAMT(ctx, bserv.Blockstore(), hamtCid); err != nil {
+			return nil, err
+		}
+	} else {
+		if h, err = NewEmptyHamt(bserv.Blockstore()); err != nil {
+			return nil, err
+		}
 	}
 
 	return &cipherStore{
@@ -227,9 +234,11 @@ func LoadHAMT(ctx context.Context, bstore blockstore.Blockstore, id cid.Cid) (*H
 	store := ipldcbor.NewCborStore(bstore)
 	root, err := hamt.LoadNode(ctx, store, id)
 	if err != nil {
+		log.Debugw("LoadHAMT", "cid", id, "err", err)
 		return nil, err
 	}
 
+	log.Debugw("LoadHAMT", "cid", id)
 	return &HAMT{
 		cid:   id,
 		root:  root,
@@ -241,7 +250,6 @@ func (h *HAMT) CID() cid.Cid     { return h.cid }
 func (h *HAMT) Root() *hamt.Node { return h.root }
 
 func (h *HAMT) Write(ctx context.Context) error {
-	log.Debugw("HAMT.Write")
 	id, err := h.root.Write(ctx)
 	if err != nil {
 		return err
@@ -264,6 +272,17 @@ func (h *HAMT) Merge(ctx context.Context, b *hamt.Node) error {
 		_, err := h.root.SetIfAbsent(ctx, k, val)
 		return err
 	})
+}
+
+func (h *HAMT) Diagnostic(ctx context.Context) map[string]string {
+	vs := map[string]string{}
+	h.root.ForEach(ctx, func(k string, val *cbg.Deferred) error {
+		vs[k] = base64.URLEncoding.EncodeToString(val.Raw)
+		return nil
+	})
+
+	log.Debugw("HAMT.Diagnostic", "cid", h.cid, "len(values)", len(vs))
+	return vs
 }
 
 // A CBOR-marshalable byte array.
