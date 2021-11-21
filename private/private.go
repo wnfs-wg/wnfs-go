@@ -253,23 +253,12 @@ func NewEmptyTree(fs Store, parent BareNamefilter, name string) (*Tree, error) {
 		return nil, err
 	}
 
-	ts := base.Timestamp()
-
 	return &Tree{
 		fs:      fs,
 		ratchet: ratchet.NewSpiral(),
 		name:    name,
 		header: Header{
-			Info: HeaderInfo{
-				WNFS:  base.LatestVersion,
-				Type:  base.NTDir,
-				Mode:  base.ModeDefault,
-				Ctime: ts.Unix(),
-				Mtime: ts.Unix(),
-
-				INumber:        in,
-				BareNamefilter: bnf,
-			},
+			Info: NewHeaderInfo(base.NTDir, in, bnf),
 		},
 		links: PrivateLinks{},
 	}, nil
@@ -762,24 +751,12 @@ func NewFile(fs Store, parent BareNamefilter, f fs.File) (*File, error) {
 		return nil, err
 	}
 
-	md := base.NewUnixMeta(true)
-
 	return &File{
 		fs:      fs,
 		ratchet: ratchet.NewSpiral(),
 		content: f,
 		header: Header{
-			Info: HeaderInfo{
-				WNFS:  base.LatestVersion,
-				Type:  base.NTFile,
-				Mode:  base.ModeDefault,
-				Ctime: md.Ctime,
-				Mtime: md.Mtime,
-				Size:  0,
-
-				INumber:        in,
-				BareNamefilter: bnf,
-			},
+			Info: NewHeaderInfo(base.NTFile, in, bnf),
 		},
 	}, nil
 }
@@ -1089,6 +1066,21 @@ type HeaderInfo struct {
 	INumber        INumber
 	BareNamefilter BareNamefilter
 	Ratchet        string
+}
+
+func NewHeaderInfo(nt base.NodeType, in INumber, bnf BareNamefilter) HeaderInfo {
+	now := base.Timestamp().Unix()
+	return HeaderInfo{
+		WNFS:  base.LatestVersion,
+		Type:  nt,
+		Mode:  base.ModeDefault,
+		Ctime: now,
+		Mtime: now,
+		Size:  0,
+
+		INumber:        in,
+		BareNamefilter: bnf,
+	}
 }
 
 func HeaderInfoFromCBOR(d []byte) (HeaderInfo, error) {

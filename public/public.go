@@ -94,19 +94,6 @@ func (h *Header) encodeBlock() (blocks.Block, error) {
 	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
 }
 
-func (h *Header) loadMetadata(fs base.MerkleDagFS) (*base.Metadata, error) {
-	if h.Metadata == nil {
-		return nil, fmt.Errorf("Header is missing %s link", base.MetadataLinkName)
-	}
-
-	md, err := base.LoadMetadata(fs.Context(), fs.DagStore(), *h.Metadata)
-	if err != nil {
-		return nil, fmt.Errorf("loading %s data %s:\n%w", base.MetadataLinkName, h.Metadata, err)
-	}
-
-	return md, nil
-}
-
 func (h *Header) links() mdstore.Links {
 	links := mdstore.NewLinks()
 
@@ -190,13 +177,12 @@ type PublicTree struct {
 	cid  cid.Cid
 	h    *Header
 
-	metadata *base.Metadata
+	metadata *DataFile
 	skeleton base.Skeleton
 	userland mdstore.Links // links to files are stored in "userland" Header key
 }
 
 var (
-	_ mdstore.DagNode     = (*PublicTree)(nil)
 	_ base.Tree           = (*PublicTree)(nil)
 	_ base.SkeletonSource = (*PublicTree)(nil)
 	_ fs.File             = (*PublicTree)(nil)
@@ -494,14 +480,10 @@ func (t *PublicTree) Put() (base.PutResult, error) {
 	t.h.Userland = &id
 
 	if t.metadata != nil {
-		metaBuf, err := base.EncodeCBOR(t.metadata)
-		if err != nil {
+		if _, err = t.metadata.Put(); err != nil {
 			return nil, err
 		}
-		id, err := store.PutBlock(metaBuf.Bytes())
-		if err != nil {
-			return nil, err
-		}
+		id := t.metadata.Cid()
 		t.h.Metadata = &id
 	}
 
@@ -673,7 +655,7 @@ type PublicFile struct {
 	cid  cid.Cid
 	h    *Header
 
-	metadata *base.Metadata
+	metadata *DataFile
 	content  io.ReadCloser
 }
 
@@ -704,13 +686,12 @@ func LoadFile(ctx context.Context, fs base.MerkleDagFS, name string, id cid.Cid)
 
 func fileFromHeader(ctx context.Context, fs base.MerkleDagFS, h *Header, name string, id cid.Cid) (*PublicFile, error) {
 	var (
-		store = fs.DagStore()
-		md    *base.Metadata
-		err   error
+		md  *DataFile
+		err error
 	)
 
 	if h.Metadata != nil {
-		if md, err = base.LoadMetadata(ctx, store, *h.Metadata); err != nil {
+		if md, err = LoadDataFile(ctx, fs, base.MetadataLinkName, *h.Metadata); err != nil {
 			return nil, err
 		}
 	}
@@ -786,15 +767,12 @@ func (f *PublicFile) Put() (base.PutResult, error) {
 	f.h.Userland = &userlandRes.Cid
 
 	if f.metadata != nil {
-		buf, err := base.EncodeCBOR(f.metadata)
-		if err != nil {
-			return PutResult{}, fmt.Errorf("encoding file %q metadata: %w", f.name, err)
-		}
-		metadataCid, err := store.PutBlock(buf.Bytes())
+		_, err := f.metadata.Put()
 		if err != nil {
 			return nil, err
 		}
-		f.h.Metadata = &metadataCid
+		id := f.metadata.Cid()
+		f.h.Metadata = &id
 	}
 
 	// add previous reference

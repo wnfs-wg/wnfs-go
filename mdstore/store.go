@@ -31,9 +31,6 @@ var log = golog.Logger("wnfs")
 type MerkleDagStore interface {
 	Blockservice() blockservice.BlockService
 
-	GetBlock(ctx context.Context, id cid.Cid) (d []byte, err error)
-	PutBlock(d []byte) (id cid.Cid, err error)
-
 	GetFile(ctx context.Context, root cid.Cid) (io.ReadCloser, error)
 	PutFile(f fs.File) (PutResult, error)
 }
@@ -59,27 +56,6 @@ func NewMerkleDagStore(ctx context.Context, bserv blockservice.BlockService) (Me
 }
 
 func (mds *merkleDagStore) Blockservice() blockservice.BlockService { return mds.bserv }
-
-func (mds *merkleDagStore) GetBlock(ctx context.Context, id cid.Cid) ([]byte, error) {
-	block, err := mds.bserv.GetBlock(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return block.RawData(), nil
-}
-
-func (mds *merkleDagStore) PutBlock(d []byte) (id cid.Cid, err error) {
-	mh, err := multihash.Sum(d, multihash.SHA2_256, -1)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	block, err := blocks.NewBlockWithCid(d, cid.NewCidV1(cid.Raw, mh))
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	err = mds.bserv.AddBlock(block)
-	return block.Cid(), err
-}
 
 func (mds *merkleDagStore) PutFile(f fs.File) (PutResult, error) {
 	// dserv := format.NewBufferedDAG(mds.ctx, mds.dagserv)
@@ -168,36 +144,6 @@ func AllKeys(ctx context.Context, bs blockstore.Blockstore) ([]cid.Cid, error) {
 	}
 
 	return ids, nil
-}
-
-type DagNode interface {
-	Size() int64
-	Cid() cid.Cid
-	Links() Links
-	Raw() []byte
-}
-
-type dagNode struct {
-	id   cid.Cid
-	size int64
-	node format.Node
-}
-
-var _ DagNode = (*dagNode)(nil)
-
-func (n dagNode) Size() int64  { return n.size }
-func (n dagNode) Cid() cid.Cid { return n.id }
-func (n dagNode) Raw() []byte  { return n.node.RawData() }
-func (n dagNode) Links() Links {
-	links := NewLinks()
-	for _, link := range n.node.Links() {
-		links.Add(Link{
-			Name: link.Name,
-			Cid:  link.Cid,
-			Size: int64(link.Size),
-		})
-	}
-	return links
 }
 
 type Links struct {
@@ -296,16 +242,6 @@ type Link struct {
 
 	IsFile bool
 	Mtime  int64
-}
-
-func LinkFromNode(node DagNode, name string, isFile bool) Link {
-	return Link{
-		Name:   name,
-		IsFile: isFile,
-
-		Cid:  node.Cid(),
-		Size: node.Size(),
-	}
 }
 
 func (l Link) IsEmpty() bool {
