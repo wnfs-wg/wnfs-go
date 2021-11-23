@@ -22,7 +22,6 @@ import (
 	ipfs_corehttp "github.com/ipfs/go-ipfs/core/corehttp"
 	ipfsrepo "github.com/ipfs/go-ipfs/repo"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
-	format "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
@@ -377,29 +376,6 @@ func (fs *Filestore) serveAPI() error {
 	// or configurable
 	fmt.Println("starting IPFS HTTP API:")
 	return ipfs_corehttp.ListenAndServe(fs.node, addr, opts...)
-}
-
-type ipfsDagNode struct {
-	id   cid.Cid
-	size int64
-	node format.Node
-}
-
-var _ mdstore.DagNode = (*ipfsDagNode)(nil)
-
-func (n ipfsDagNode) Size() int64  { return n.size }
-func (n ipfsDagNode) Cid() cid.Cid { return n.id }
-func (n ipfsDagNode) Raw() []byte  { return n.node.RawData() }
-func (n ipfsDagNode) Links() mdstore.Links {
-	links := mdstore.NewLinks()
-	for _, link := range n.node.Links() {
-		links.Add(mdstore.Link{
-			Name: link.Name,
-			Cid:  link.Cid,
-			Size: int64(link.Size),
-		})
-	}
-	return links
 }
 
 type ipfsFile struct {

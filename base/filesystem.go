@@ -47,6 +47,8 @@ func (nt NodeType) String() string {
 	switch nt {
 	case NTFile:
 		return "file"
+	case NTDataFile:
+		return "datafile"
 	case NTDir:
 		return "dir"
 	case NTSymlink:
@@ -72,7 +74,9 @@ type MerkleDagFS interface {
 
 type Node interface {
 	fs.File
+	fs.FileInfo
 	Cid() cid.Cid
+	Type() NodeType
 	AsHistoryEntry() HistoryEntry
 	AsLink() mdstore.Link
 	History(ctx context.Context, limit int) ([]HistoryEntry, error)

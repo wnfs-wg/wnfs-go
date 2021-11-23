@@ -310,11 +310,11 @@ func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tre
 		}
 
 		// node exists in both trees & CIDs are inequal. merge recursively
-		lcl, err := loadNodeFromPrivateLink(a.fs, localInfo)
+		lcl, err := LoadNode(ctx, a.fs, localInfo.Name, localInfo.Cid, localInfo.Key)
 		if err != nil {
 			return res, err
 		}
-		rem, err := loadNodeFromPrivateLink(b.fs, remInfo)
+		rem, err := LoadNode(ctx, b.fs, remInfo.Name, remInfo.Cid, remInfo.Key)
 		if err != nil {
 			return res, err
 		}

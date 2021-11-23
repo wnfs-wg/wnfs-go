@@ -1,7 +1,9 @@
 package wnfs
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -224,12 +226,12 @@ func (fsys *fileSystem) Mkdir(pathStr string, opts ...MutationOptions) error {
 }
 
 func (fsys *fileSystem) Open(pathStr string) (fs.File, error) {
-	log.Debugw("fileSystem.Open", "pathStr", pathStr)
 	tree, path, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
 		return nil, err
 	}
 
+	log.Debugw("fileSystem.Open", "pathStr", pathStr, "path", path)
 	return tree.Get(path)
 }
 
@@ -267,11 +269,12 @@ func (fsys *fileSystem) Write(pathStr string, f fs.File, opts ...MutationOptions
 	log.Debugw("fileSystem.Write", "pathStr", pathStr)
 	opt := MutationOptions{}.assign(opts)
 
+	_, isDataFile := f.(StructuredDataFile)
 	fi, err := f.Stat()
 	if err != nil {
 		return err
 	}
-	if fi.IsDir() {
+	if fi.IsDir() && !isDataFile {
 		return errors.New("write only accepts files")
 	}
 
@@ -474,9 +477,11 @@ func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid
 		if r.Public, err = public.LoadTree(ctx, fs, FileHierarchyNamePublic, *r.h.Public); err != nil {
 			return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, r.h.Public, err)
 		}
+	} else {
+		r.Public = public.NewEmptyTree(fs, FileHierarchyNamePublic)
 	}
 
-	if r.h.Private != nil {
+	if r.h.Private != nil && !rootKey.IsEmpty() {
 		if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, *r.h.Private); err != nil {
 			return nil, err
 		}
@@ -486,6 +491,9 @@ func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid
 	} else {
 		if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, cid.Undef); err != nil {
 			return nil, err
+		}
+		if r.Private, err = private.LoadRoot(fs.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName); err != nil {
+			return nil, fmt.Errorf("opening private root:\n%w", err)
 		}
 	}
 
@@ -520,9 +528,14 @@ func (r *rootTree) Put() (result mdstore.PutResult, err error) {
 	return result, nil
 }
 
-func (r *rootTree) Cid() cid.Cid { return r.id }
-func (r *rootTree) Name() string { return "wnfs" }
-func (r *rootTree) Size() int64  { return r.h.Info.Size }
+func (r *rootTree) Cid() cid.Cid        { return r.id }
+func (r *rootTree) Name() string        { return "wnfs" }
+func (r *rootTree) Size() int64         { return r.h.Info.Size }
+func (r *rootTree) IsDir() bool         { return true }
+func (r *rootTree) Mode() fs.FileMode   { return fs.FileMode(r.h.Info.Mode) }
+func (r *rootTree) Type() base.NodeType { return r.h.Info.Type }
+func (r *rootTree) ModTime() time.Time  { return time.Unix(r.h.Info.Mtime, 0) }
+func (r *rootTree) Sys() interface{}    { return r.fs }
 func (t *rootTree) AsLink() mdstore.Link {
 	return mdstore.Link{
 		Name:   "",
@@ -539,6 +552,7 @@ func (r *rootTree) Links() mdstore.Links {
 		mdstore.Link{Cid: r.Public.Cid(), Size: r.Public.Size(), Name: FileHierarchyNamePublic},
 		mdstore.Link{Cid: r.Private.Cid(), Size: r.Private.Size(), Name: FileHierarchyNamePrivate},
 	)
+
 	if r.h.Previous != nil && !r.id.Equals(cid.Undef) {
 		links.Add(mdstore.Link{Cid: *r.h.Previous, Name: PreviousLinkName})
 	}
@@ -760,4 +774,52 @@ func HAMTContents(ctx context.Context, bs blockservice.BlockService, id cid.Cid)
 	}
 
 	return h.Diagnostic(ctx), nil
+}
+
+type StructuredDataFile interface {
+	fs.File
+	Data() (interface{}, error)
+}
+
+type dataFile struct {
+	name    string
+	content interface{}
+	buf     *bytes.Buffer
+}
+
+var (
+	_ StructuredDataFile = (*dataFile)(nil)
+	_ fs.FileInfo        = (*dataFile)(nil)
+)
+
+func NewDataFile(name string, data interface{}) StructuredDataFile {
+	return &dataFile{
+		name:    name,
+		content: data,
+	}
+}
+
+func (df *dataFile) Stat() (fs.FileInfo, error) { return df, nil }
+func (df *dataFile) Name() string               { return df.name }
+func (df *dataFile) IsDir() bool                { return true }
+func (df *dataFile) Size() int64                { return -1 }
+func (df *dataFile) ModTime() time.Time         { return time.Time{} }
+func (df *dataFile) Mode() fs.FileMode          { return base.ModeDefault }
+func (df *dataFile) Sys() interface{}           { return nil }
+
+func (df *dataFile) Read(p []byte) (int, error) {
+	return 0, fmt.Errorf("Not Implemented: dataFile.Read")
+}
+func (df *dataFile) Close() error { return nil }
+func (df *dataFile) Data() (interface{}, error) {
+	// TODO(b5): horrible. This is just to coerce to usable types. In the real
+	// world we need a cbor serialization lib that can handle arbitrary types
+	// *and* recognizes cid.CID natively
+	data, err := json.Marshal(df.content)
+	if err != nil {
+		return nil, err
+	}
+	res := map[string]interface{}{}
+	err = json.Unmarshal(data, &res)
+	return res, err
 }
