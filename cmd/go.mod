@@ -5,8 +5,8 @@ go 1.17
 replace (
 	// adds a node.Write(ctx) method. See: https://github.com/filecoin-project/go-hamt-ipld/pull/94
 	github.com/filecoin-project/go-hamt-ipld/v3 => github.com/qri-io/go-hamt-ipld/v3 v3.1.1-0.20210829174419-d5dd13402d27
-	github.com/qri-io/wnfs-go => ../
 	github.com/ipfs/go-ipld-cbor => ../go-ipld-cbor
+	github.com/qri-io/wnfs-go => ../
 )
 
 require (
@@ -83,7 +83,7 @@ require (
 	github.com/ipfs/go-ipfs-provider v0.6.1 // indirect
 	github.com/ipfs/go-ipfs-routing v0.1.0 // indirect
 	github.com/ipfs/go-ipfs-util v0.0.2 // indirect
-	github.com/ipfs/go-ipld-cbor v0.0.5 // indirect
+	github.com/ipfs/go-ipld-cbor v0.0.5
 	github.com/ipfs/go-ipld-format v0.2.0
 	github.com/ipfs/go-ipld-git v0.1.0 // indirect
 	github.com/ipfs/go-ipld-legacy v0.1.0 // indirect
@@ -175,7 +175,6 @@ require (
 	github.com/mikioh/tcpopt v0.0.0-20190314235656-172688c1accc // indirect
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1 // indirect
 	github.com/minio/sha256-simd v1.0.0 // indirect
-	github.com/mitchellh/go-homedir v1.1.0
 	github.com/mitchellh/mapstructure v1.1.2
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/multiformats/go-base32 v0.0.3 // indirect
@@ -185,7 +184,6 @@ require (
 	github.com/multiformats/go-multiaddr-fmt v0.1.0 // indirect
 	github.com/multiformats/go-multibase v0.0.3 // indirect
 	github.com/multiformats/go-multicodec v0.3.0 // indirect
-	github.com/multiformats/go-multihash v0.0.15
 	github.com/multiformats/go-multistream v0.2.2 // indirect
 	github.com/multiformats/go-varint v0.0.6 // indirect
 	github.com/nxadm/tail v1.4.8 // indirect
@@ -248,6 +246,8 @@ require (
 	github.com/ipfs/go-ipfs-blockstore v1.0.5-0.20210802214209-c56038684c45 // indirect
 	github.com/ipfs/go-unixfsnode v1.1.2 // indirect
 	github.com/libp2p/zeroconf/v2 v2.0.0 // indirect
+	github.com/mitchellh/go-homedir v1.1.0 // indirect
+	github.com/multiformats/go-multihash v0.0.15 // indirect
 	github.com/pierrec/xxHash v0.1.5 // indirect
 	github.com/sergi/go-diff v1.2.0 // indirect
 	go.opentelemetry.io/otel v0.20.0 // indirect

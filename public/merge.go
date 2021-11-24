@@ -151,7 +151,7 @@ func merge(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (result
 // 	* in all other cases, replace prior contents with winning CID
 // always writes to a's filesystem
 func mergeNodes(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node, aGen, bGen int) (merged base.Node, err error) {
-	log.Debugw("merge nodes", "aName", a.AsLink().Name, "bName", b.AsLink().Name, "destFS", fmt.Sprintf("%#v", destFS))
+	log.Debugw("merge nodes", "aName", a.Name(), "bName", b.Name(), "destFS", fmt.Sprintf("%#v", destFS))
 	// if b is preferred over a, switch values
 	if aGen < bGen || (aGen == bGen && base.LessCID(b.Cid(), a.Cid())) {
 		a, b = b, a
@@ -187,7 +187,13 @@ func mergeTrees(ctx context.Context, destFS base.MerkleDagFS, a, b *PublicTree) 
 			}
 
 			a.skeleton[remName] = remInfo
-			a.userland.Add(n.AsLink())
+			a.userland.Add(mdstore.Link{
+				Name:   n.Name(),
+				Size:   n.Size(),
+				Cid:    n.Cid(),
+				Mtime:  n.ModTime().Unix(),
+				IsFile: (n.Type() == base.NTFile || n.Type() == base.NTDataFile),
+			})
 			checked[remName] = struct{}{}
 			continue
 		}

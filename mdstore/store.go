@@ -13,10 +13,10 @@ import (
 	cidutil "github.com/ipfs/go-cidutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	chunker "github.com/ipfs/go-ipfs-chunker"
+	cbornode "github.com/ipfs/go-ipld-cbor"
 	format "github.com/ipfs/go-ipld-format"
 	golog "github.com/ipfs/go-log"
 	merkledag "github.com/ipfs/go-merkledag"
-	unixfs "github.com/ipfs/go-unixfs"
 	balanced "github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
 	unixfsio "github.com/ipfs/go-unixfs/io"
@@ -30,12 +30,6 @@ var log = golog.Logger("wnfs")
 // to run wnfs
 type MerkleDagStore interface {
 	Blockservice() blockservice.BlockService
-
-	GetBlock(ctx context.Context, id cid.Cid) (d []byte, err error)
-	PutBlock(d []byte) (id cid.Cid, err error)
-
-	GetNode(ctx context.Context, id cid.Cid) (DagNode, error)
-	PutNode(links Links) (PutResult, error)
 
 	GetFile(ctx context.Context, root cid.Cid) (io.ReadCloser, error)
 	PutFile(f fs.File) (PutResult, error)
@@ -62,74 +56,6 @@ func NewMerkleDagStore(ctx context.Context, bserv blockservice.BlockService) (Me
 }
 
 func (mds *merkleDagStore) Blockservice() blockservice.BlockService { return mds.bserv }
-
-func (mds *merkleDagStore) GetNode(ctx context.Context, id cid.Cid) (DagNode, error) {
-	node, err := mds.dagserv.Get(mds.ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	size, err := node.Size()
-	if err != nil {
-		return nil, err
-	}
-
-	return &dagNode{
-		id:   id,
-		size: int64(size),
-		node: node,
-	}, nil
-}
-
-func (mds *merkleDagStore) PutNode(links Links) (PutResult, error) {
-	node := unixfs.EmptyDirNode()
-	node.SetCidBuilder(cid.V1Builder{
-		Codec:    cid.DagProtobuf,
-		MhType:   multihash.SHA2_256,
-		MhLength: -1,
-	})
-	for name, lnk := range links.Map() {
-		if !lnk.Cid.Defined() {
-			return PutResult{}, fmt.Errorf("cannot write link %q: empty CID", name)
-		}
-		node.AddRawLink(name, lnk.IPLD())
-	}
-	// _, err := node.EncodeProtobuf(false)
-	err := mds.dagserv.Add(mds.ctx, node)
-	if err != nil {
-		return PutResult{}, err
-	}
-	size, err := node.Size()
-	if err != nil {
-		return PutResult{}, err
-	}
-
-	return PutResult{
-		Cid:  node.Cid(),
-		Size: int64(size),
-	}, err
-}
-
-func (mds *merkleDagStore) GetBlock(ctx context.Context, id cid.Cid) ([]byte, error) {
-	block, err := mds.bserv.GetBlock(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return block.RawData(), nil
-}
-
-func (mds *merkleDagStore) PutBlock(d []byte) (id cid.Cid, err error) {
-	mh, err := multihash.Sum(d, multihash.SHA2_256, -1)
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	block, err := blocks.NewBlockWithCid(d, cid.NewCidV1(cid.Raw, mh))
-	if err != nil {
-		return cid.Cid{}, err
-	}
-	err = mds.bserv.AddBlock(block)
-	return block.Cid(), err
-}
 
 func (mds *merkleDagStore) PutFile(f fs.File) (PutResult, error) {
 	// dserv := format.NewBufferedDAG(mds.ctx, mds.dagserv)
@@ -185,20 +111,22 @@ func (mds *merkleDagStore) GetFile(ctx context.Context, root cid.Cid) (io.ReadCl
 
 // Copy blocks from src to dst
 func CopyBlocks(ctx context.Context, id cid.Cid, src, dst MerkleDagStore) error {
-	n, err := src.GetNode(ctx, id)
+	blk, err := src.Blockservice().GetBlock(ctx, id)
 	if err != nil {
 		return err
-	}
-	log.Debugw("CopyBlock", "cid", n.Cid(), "len(links)", n.Links().Len())
-	for _, l := range n.Links().Map() {
-		if err := CopyBlocks(ctx, l.Cid, src, dst); err != nil {
-			return fmt.Errorf("copying block %q: %w", l.Cid, err)
-		}
 	}
 
-	blk, err := src.Blockservice().Blockstore().Get(id)
-	if err != nil {
-		return err
+	if blk.Cid().Type() == cid.DagCBOR {
+		n, err := cbornode.DecodeBlock(blk)
+		if err != nil {
+			return err
+		}
+		log.Debugw("CopyBlock", "cid", n.Cid(), "len(links)", len(n.Links()))
+		for _, l := range n.Links() {
+			if err := CopyBlocks(ctx, l.Cid, src, dst); err != nil {
+				return fmt.Errorf("copying block %q: %w", l.Cid, err)
+			}
+		}
 	}
 
 	return dst.Blockservice().Blockstore().Put(blk)
@@ -218,36 +146,6 @@ func AllKeys(ctx context.Context, bs blockstore.Blockstore) ([]cid.Cid, error) {
 	return ids, nil
 }
 
-type DagNode interface {
-	Size() int64
-	Cid() cid.Cid
-	Links() Links
-	Raw() []byte
-}
-
-type dagNode struct {
-	id   cid.Cid
-	size int64
-	node format.Node
-}
-
-var _ DagNode = (*dagNode)(nil)
-
-func (n dagNode) Size() int64  { return n.size }
-func (n dagNode) Cid() cid.Cid { return n.id }
-func (n dagNode) Raw() []byte  { return n.node.RawData() }
-func (n dagNode) Links() Links {
-	links := NewLinks()
-	for _, link := range n.node.Links() {
-		links.Add(Link{
-			Name: link.Name,
-			Cid:  link.Cid,
-			Size: int64(link.Size),
-		})
-	}
-	return links
-}
-
 type Links struct {
 	l map[string]Link
 }
@@ -262,6 +160,22 @@ func NewLinks(links ...Link) Links {
 	}
 
 	return lks
+}
+
+func DecodeLinksBlock(blk blocks.Block) (Links, error) {
+	lks := Links{l: map[string]Link{}}
+	n, err := cbornode.DecodeBlock(blk)
+	if err != nil {
+		return lks, err
+	}
+	for _, l := range n.Links() {
+		lks.l[l.Name] = Link{
+			Name: l.Name,
+			Cid:  l.Cid,
+			Size: int64(l.Size),
+		}
+	}
+	return lks, nil
 }
 
 func (ls Links) Len() int {
@@ -313,6 +227,14 @@ func (ls Links) Map() map[string]Link {
 	return ls.l
 }
 
+func (ls Links) EncodeBlock() (blocks.Block, error) {
+	links := map[string]cid.Cid{}
+	for k, l := range ls.l {
+		links[k] = l.Cid
+	}
+	return cbornode.WrapObject(links, multihash.SHA2_256, -1)
+}
+
 type Link struct {
 	Name string
 	Size int64
@@ -320,16 +242,6 @@ type Link struct {
 
 	IsFile bool
 	Mtime  int64
-}
-
-func LinkFromNode(node DagNode, name string, isFile bool) Link {
-	return Link{
-		Name:   name,
-		IsFile: isFile,
-
-		Cid:  node.Cid(),
-		Size: node.Size(),
-	}
 }
 
 func (l Link) IsEmpty() bool {

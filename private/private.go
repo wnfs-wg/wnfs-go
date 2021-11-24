@@ -26,7 +26,10 @@ import (
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
-var log = golog.Logger("wnfs")
+var (
+	log      = golog.Logger("wnfs")
+	EmptyKey = Key([32]byte{})
+)
 
 type Key [32]byte
 
@@ -47,7 +50,7 @@ func (k *Key) Decode(s string) error {
 	return nil
 }
 
-func (k Key) IsEmpty() bool { return k == Key([32]byte{}) }
+func (k Key) IsEmpty() bool { return k == EmptyKey }
 
 func (k Key) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + k.Encode() + `"`), nil
@@ -86,6 +89,7 @@ type privateNode interface {
 	Ratchet() *ratchet.Spiral
 	PrivateName() (Name, error)
 	BareNamefilter() BareNamefilter
+	Update(content fs.File) (PutResult, error)
 }
 
 type privateTree interface {
@@ -253,23 +257,12 @@ func NewEmptyTree(fs Store, parent BareNamefilter, name string) (*Tree, error) {
 		return nil, err
 	}
 
-	ts := base.Timestamp()
-
 	return &Tree{
 		fs:      fs,
 		ratchet: ratchet.NewSpiral(),
 		name:    name,
 		header: Header{
-			Info: HeaderInfo{
-				WNFS:  base.LatestVersion,
-				Type:  base.NTDir,
-				Mode:  base.ModeDefault,
-				Ctime: ts.Unix(),
-				Mtime: ts.Unix(),
-
-				INumber:        in,
-				BareNamefilter: bnf,
-			},
+			Info: NewHeaderInfo(base.NTDir, in, bnf),
 		},
 		links: PrivateLinks{},
 	}, nil
@@ -280,15 +273,6 @@ func LoadTree(fs Store, name string, key Key, id cid.Cid) (*Tree, error) {
 	ctx := context.TODO()
 
 	header, err := loadHeader(ctx, fs, key, id)
-	if err != nil {
-		return nil, err
-	}
-
-	blk, err := fs.Blockservice().GetBlock(ctx, header.ContentID)
-	if err != nil {
-		return nil, err
-	}
-	links, err := unmarshalPrivateLinksBlock(blk, key)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +289,6 @@ func LoadTree(fs Store, name string, key Key, id cid.Cid) (*Tree, error) {
 		ratchet: ratchet,
 		cid:     id,
 		header:  header,
-		links:   links,
 	}, nil
 }
 
@@ -321,6 +304,7 @@ func (pt *Tree) Name() string                   { return pt.name }
 func (pt *Tree) Size() int64                    { return pt.header.Info.Size }
 func (pt *Tree) ModTime() time.Time             { return time.Unix(pt.header.Info.Mtime, 0) }
 func (pt *Tree) Mode() fs.FileMode              { return fs.FileMode(pt.header.Info.Ctime) }
+func (pt *Tree) Type() base.NodeType            { return pt.header.Info.Type }
 func (pt *Tree) IsDir() bool                    { return true }
 func (pt *Tree) Sys() interface{}               { return pt.fs }
 func (pt *Tree) Stat() (fs.FileInfo, error)     { return pt, nil }
@@ -345,14 +329,17 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
-func (pt *Tree) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   pt.name,
-		Cid:    pt.cid,
-		Size:   pt.header.Info.Size,
-		IsFile: false,
-		Mtime:  pt.header.Info.Mtime,
+func (pt *Tree) ensureLinks(ctx context.Context) error {
+	if pt.links == nil {
+		blk, err := pt.fs.Blockservice().GetBlock(ctx, pt.header.ContentID)
+		if err != nil {
+			return err
+		}
+
+		pt.links, err = unmarshalPrivateLinksBlock(blk, pt.Key())
+		return err
 	}
+	return nil
 }
 
 func (pt *Tree) PrivateName() (Name, error) {
@@ -370,6 +357,10 @@ func (pt *Tree) Read(p []byte) (n int, err error) {
 func (pt *Tree) Close() error { return nil }
 
 func (pt *Tree) ReadDir(n int) ([]fs.DirEntry, error) {
+	if err := pt.ensureLinks(context.TODO()); err != nil {
+		return nil, err
+	}
+
 	if n < 0 {
 		n = len(pt.links)
 	}
@@ -385,15 +376,23 @@ func (pt *Tree) ReadDir(n int) ([]fs.DirEntry, error) {
 	return entries, nil
 }
 
+func (pt *Tree) Update(file fs.File) (PutResult, error) {
+	return PutResult{}, fmt.Errorf("directories don't support updating")
+}
+
 func (pt *Tree) Add(path base.Path, f fs.File) (res base.PutResult, err error) {
+	ctx := context.TODO()
 	log.Debugw("Tree.Add", "path", path)
 	if len(path) == 0 {
 		return res, errors.New("invalid path: empty")
 	}
+	if err := pt.ensureLinks(context.TODO()); err != nil {
+		return res, err
+	}
 
 	head, tail := path.Shift()
 	if tail == nil {
-		res, err = pt.createOrUpdateChildFile(head, f)
+		res, err = pt.createOrUpdateChildFile(ctx, head, f)
 		if err != nil {
 			return res, err
 		}
@@ -456,6 +455,10 @@ func (pt *Tree) Get(path base.Path) (fs.File, error) {
 		return pt, nil
 	}
 
+	if err := pt.ensureLinks(context.TODO()); err != nil {
+		return nil, err
+	}
+
 	link := pt.links.Get(head)
 	if link == nil {
 		return nil, base.ErrNotFound
@@ -471,17 +474,16 @@ func (pt *Tree) Get(path base.Path) (fs.File, error) {
 		return ch.Get(tail)
 	}
 
-	if link.IsFile {
-		return LoadFileFromCID(pt.fs, head, link.Key, link.Cid)
-	}
-
-	return LoadTree(pt.fs, link.Name, link.Key, link.Cid)
+	return LoadNode(context.TODO(), pt.fs, head, link.Cid, link.Key)
 }
 
 func (pt *Tree) Rm(path base.Path) (base.PutResult, error) {
 	head, tail := path.Shift()
 	if head == "" {
 		return nil, fmt.Errorf("invalid path: empty")
+	}
+	if err := pt.ensureLinks(context.TODO()); err != nil {
+		return nil, err
 	}
 
 	if tail == nil {
@@ -609,6 +611,9 @@ func history(ctx context.Context, n privateNode, maxRevs int) ([]base.HistoryEnt
 }
 
 func (pt *Tree) getOrCreateDirectChildTree(name string) (*Tree, error) {
+	if err := pt.ensureLinks(context.TODO()); err != nil {
+		return nil, err
+	}
 	link := pt.links.Get(name)
 	if link == nil {
 		return NewEmptyTree(pt.fs, pt.header.Info.BareNamefilter, name)
@@ -625,7 +630,7 @@ func (pt *Tree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs
 	if fi.IsDir() {
 		return pt.createOrUpdateChildDirectory(srcPathStr, name, f, srcFS)
 	}
-	return pt.createOrUpdateChildFile(name, f)
+	return pt.createOrUpdateChildFile(context.TODO(), name, f)
 }
 
 func (pt *Tree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
@@ -636,6 +641,9 @@ func (pt *Tree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File,
 	ents, err := dir.ReadDir(-1)
 	if err != nil {
 		return nil, fmt.Errorf("reading directory contents: %w", err)
+	}
+	if err := pt.ensureLinks(context.TODO()); err != nil {
+		return nil, err
 	}
 
 	var tree *Tree
@@ -661,14 +669,29 @@ func (pt *Tree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File,
 	return res, nil
 }
 
-func (pt *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
+func (pt *Tree) createOrUpdateChildFile(ctx context.Context, name string, f fs.File) (base.PutResult, error) {
+	if err := pt.ensureLinks(ctx); err != nil {
+		return nil, err
+	}
 	if link := pt.links.Get(name); link != nil {
-		previousFile, err := LoadFileFromCID(pt.fs, link.Name, link.Key, link.Cid)
+		prev, err := LoadNode(ctx, pt.fs, link.Name, link.Cid, link.Key)
+		if err != nil {
+			log.Debugw("createOrUpdateChildFile", "err", err)
+			return nil, err
+		}
+		return prev.Update(f)
+	}
+
+	if dataFile, ok := f.(StructuredDataFile); ok {
+		v, err := dataFile.Data()
 		if err != nil {
 			return nil, err
 		}
-		previousFile.SetContents(f)
-		return previousFile.Put()
+		df, err := NewDataFile(pt.fs, name, v, pt.header.Info.BareNamefilter)
+		if err != nil {
+			return nil, err
+		}
+		return df.Put()
 	}
 
 	ch, err := NewFile(pt.fs, pt.header.Info.BareNamefilter, f)
@@ -680,10 +703,8 @@ func (pt *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult,
 
 func (pt *Tree) Put() (base.PutResult, error) {
 	ctx := context.TODO()
-	log.Debugw("Tree.Put", "name", pt.name, "len(links)", len(pt.links), "prevRatchet", pt.ratchet.Summary())
-
 	pt.ratchet.Inc()
-	log.Debugw("Tree.Put", "new ratchet", pt.ratchet.Summary())
+	log.Debugw("Tree.Put", "name", pt.name, "len(links)", len(pt.links), "newRatchet", pt.ratchet.Summary())
 	key := pt.ratchet.Key()
 	pt.header.Info.Ratchet = pt.ratchet.Encode()
 	pt.header.Info.Size = pt.links.SizeSum()
@@ -723,6 +744,7 @@ func (pt *Tree) Put() (base.PutResult, error) {
 		PutResult: public.PutResult{
 			Cid:  pt.cid,
 			Size: pt.header.Info.Size,
+			Type: pt.header.Info.Type,
 		},
 		Key:     key,
 		Pointer: privName,
@@ -762,33 +784,21 @@ func NewFile(fs Store, parent BareNamefilter, f fs.File) (*File, error) {
 		return nil, err
 	}
 
-	md := base.NewUnixMeta(true)
-
 	return &File{
 		fs:      fs,
 		ratchet: ratchet.NewSpiral(),
 		content: f,
 		header: Header{
-			Info: HeaderInfo{
-				WNFS:  base.LatestVersion,
-				Type:  base.NTFile,
-				Mode:  base.ModeDefault,
-				Ctime: md.Ctime,
-				Mtime: md.Mtime,
-				Size:  0,
-
-				INumber:        in,
-				BareNamefilter: bnf,
-			},
+			Info: NewHeaderInfo(base.NTFile, in, bnf),
 		},
 	}, nil
 }
 
-func LoadFileFromCID(store Store, name string, key Key, id cid.Cid) (*File, error) {
-	log.Debugw("LoadFileFromCID", "name", name, "cid", id, "key", key.Encode())
-	header, err := loadHeader(context.TODO(), store, key, id)
+func LoadFile(ctx context.Context, store Store, name string, key Key, id cid.Cid) (*File, error) {
+	log.Debugw("LoadFile", "name", name, "cid", id, "key", key.Encode())
+	header, err := loadHeader(ctx, store, key, id)
 	if err != nil {
-		log.Debugw("LoadFileFromCID", "err", err)
+		log.Debugw("LoadFile", "err", err)
 		return nil, fmt.Errorf("decoding s-node %q header: %w", name, err)
 	}
 
@@ -798,19 +808,12 @@ func LoadFileFromCID(store Store, name string, key Key, id cid.Cid) (*File, erro
 	}
 	header.Info.Ratchet = ""
 
-	// TODO(b5): lazy-load on first call to Read()
-	content, err := store.GetEncryptedFile(header.ContentID, key[:])
-	if err != nil {
-		return nil, fmt.Errorf("decoding s-node %q file: %w", name, err)
-	}
-
 	return &File{
 		fs:      store,
 		ratchet: ratchet,
 		name:    name,
 		cid:     id,
 		header:  header,
-		content: content,
 	}, nil
 }
 
@@ -823,6 +826,7 @@ func (pf *File) PrivateFS() Store               { return pf.fs }
 func (pf *File) IsDir() bool                    { return false }
 func (pf *File) ModTime() time.Time             { return time.Unix(pf.header.Info.Mtime, 0) }
 func (pf *File) Mode() fs.FileMode              { return fs.FileMode(pf.header.Info.Mode) }
+func (pf *File) Type() base.NodeType            { return pf.header.Info.Type }
 func (pf *File) Name() string                   { return pf.name }
 func (pf *File) Size() int64                    { return pf.header.Info.Size }
 func (pf *File) Sys() interface{}               { return pf.fs }
@@ -842,20 +846,21 @@ func (pf *File) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
-func (pf *File) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   pf.name,
-		Cid:    pf.cid,
-		Size:   pf.header.Info.Size,
-		IsFile: true,
-		Mtime:  pf.header.Info.Mtime,
-	}
-}
-
 func (pf *File) Key() Key { return pf.ratchet.Key() }
 
-func (pf *File) Read(p []byte) (n int, err error) { return pf.content.Read(p) }
-func (pf *File) Close() error                     { return pf.content.Close() }
+func (pf *File) Read(p []byte) (n int, err error) {
+	if err = pf.ensureContent(); err != nil {
+		return 0, err
+	}
+	return pf.content.Read(p)
+}
+
+func (pf *File) Close() error {
+	if pf.content == nil {
+		return nil
+	}
+	return pf.content.Close()
+}
 
 func (pf *File) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	return history(ctx, pf, maxRevs)
@@ -865,13 +870,39 @@ func (pf *File) SetContents(f fs.File) {
 	pf.content = f
 }
 
-// TODO(b5): this *might* not be necessary. need to test with remote node merge
 func (pf *File) ensureContent() (err error) {
 	if pf.content == nil {
 		key := pf.ratchet.Key()
-		pf.content, err = pf.fs.GetEncryptedFile(pf.cid, key[:])
+		pf.content, err = pf.fs.GetEncryptedFile(pf.header.ContentID, key[:])
+		log.Debugw("opening file contents", "name", pf.name, "cid", pf.cid, "err", err)
 	}
 	return err
+}
+
+func (pf *File) Update(change fs.File) (result PutResult, err error) {
+	if changeDF, ok := change.(public.StructuredDataFile); ok {
+		v, err := changeDF.Data()
+		if err != nil {
+			return result, err
+		}
+
+		// update is changing from file to data file
+		df := &DataFile{
+			fs:   pf.fs,
+			cid:  pf.cid,
+			name: pf.name,
+			header: Header{
+				Info:     pf.header.Info.Copy(),
+				Metadata: pf.header.Metadata,
+			},
+		}
+		df.SetContents(v)
+		df.header.Info.Type = base.NTDataFile
+		return df.Put()
+	}
+
+	pf.SetContents(change)
+	return pf.Put()
 }
 
 func (pf *File) Put() (PutResult, error) {
@@ -924,7 +955,7 @@ func (pf *File) Put() (PutResult, error) {
 	return PutResult{
 		PutResult: public.PutResult{
 			Cid:      pf.cid,
-			IsFile:   true,
+			Type:     pf.header.Info.Type,
 			Userland: res.Cid,
 			Size:     res.Size,
 		},
@@ -955,11 +986,49 @@ type PrivateLink struct {
 	Pointer Name
 }
 
-func loadNodeFromPrivateLink(fs Store, link PrivateLink) (privateNode, error) {
-	if link.IsFile {
-		return LoadFileFromCID(fs, link.Name, link.Key, link.Cid)
+func LoadNode(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (privateNode, error) {
+	log.Debugw("LoadNode", "name", name, "id", id)
+	header, err := loadHeader(ctx, fs, key, id)
+	if err != nil {
+		log.Debugw("LoadNode", "err", err)
+		return nil, fmt.Errorf("decoding s-node %q header: %w", name, err)
 	}
-	return LoadTree(fs, link.Name, link.Key, link.Cid)
+
+	r, err := ratchet.DecodeSpiral(header.Info.Ratchet)
+	if err != nil {
+		return nil, err
+	}
+	header.Info.Ratchet = ""
+
+	switch header.Info.Type {
+	case base.NTFile:
+		return &File{
+			fs:      fs,
+			cid:     id,
+			name:    name,
+			header:  header,
+			ratchet: r,
+		}, nil
+	case base.NTDataFile:
+		return &DataFile{
+			fs:      fs,
+			cid:     id,
+			name:    name,
+			header:  header,
+			ratchet: r,
+			content: header.Value,
+		}, nil
+	case base.NTDir:
+		return &Tree{
+			fs:      fs,
+			cid:     id,
+			name:    name,
+			header:  header,
+			ratchet: r,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unrecognized private node type %s for cid %s", header.Info.Type, id)
+	}
 }
 
 type PrivateLinks map[string]PrivateLink
@@ -1038,7 +1107,7 @@ func (pls PrivateLinks) marshalEncryptedBlock(key Key) (blocks.Block, error) {
 	ciphertext := aead.Seal(nil, nonce, plaintext, nil)
 	data := append(nonce, ciphertext...)
 
-	hash, err := multihash.Sum(data, multihash.SHA2_256, -1)
+	hash, err := multihash.Sum(data, base.DefaultMultihashType, -1)
 
 	return blocks.NewBlockWithCid(data, cid.NewCidV1(cid.Raw, hash))
 }
@@ -1076,6 +1145,7 @@ type Header struct {
 	Info      HeaderInfo
 	Metadata  cid.Cid
 	ContentID cid.Cid
+	Value     interface{} // only present on dataFile nodes
 }
 
 type HeaderInfo struct {
@@ -1091,6 +1161,21 @@ type HeaderInfo struct {
 	Ratchet        string
 }
 
+func NewHeaderInfo(nt base.NodeType, in INumber, bnf BareNamefilter) HeaderInfo {
+	now := base.Timestamp().Unix()
+	return HeaderInfo{
+		WNFS:  base.LatestVersion,
+		Type:  nt,
+		Mode:  base.ModeDefault,
+		Ctime: now,
+		Mtime: now,
+		Size:  0,
+
+		INumber:        in,
+		BareNamefilter: bnf,
+	}
+}
+
 func HeaderInfoFromCBOR(d []byte) (HeaderInfo, error) {
 	hi := HeaderInfo{}
 	err := base.DecodeCBOR(d, &hi)
@@ -1099,6 +1184,20 @@ func HeaderInfoFromCBOR(d []byte) (HeaderInfo, error) {
 
 func (hi HeaderInfo) CBOR() (*bytes.Buffer, error) {
 	return base.EncodeCBOR(hi)
+}
+
+func (hi HeaderInfo) Copy() HeaderInfo {
+	return HeaderInfo{
+		WNFS:           hi.WNFS,
+		Type:           hi.Type,
+		Mode:           hi.Mode,
+		Ctime:          hi.Ctime,
+		Mtime:          hi.Mtime,
+		Size:           hi.Size,
+		INumber:        hi.INumber,
+		BareNamefilter: hi.BareNamefilter,
+		Ratchet:        hi.Ratchet,
+	}
 }
 
 func (h Header) encryptHeaderBlock(key Key) (blocks.Block, error) {
@@ -1127,11 +1226,11 @@ func (h Header) encryptHeaderBlock(key Key) (blocks.Block, error) {
 	if !h.Metadata.Equals(cid.Undef) {
 		header["metadata"] = h.Metadata
 	}
-	return cbornode.WrapObject(header, multihash.SHA2_256, -1)
+	return cbornode.WrapObject(header, base.DefaultMultihashType, -1)
 }
 
 func loadHeader(ctx context.Context, s Store, key Key, id cid.Cid) (h Header, err error) {
-	log.Debugw("decrypting header block", "cid", id, "key", key.Encode())
+	log.Debugw("loadHeader", "cid", id, "key", key.Encode())
 	blk, err := s.Blockservice().GetBlock(ctx, id)
 	if err != nil {
 		return h, fmt.Errorf("getting header block %q: %w", id.String(), err)
@@ -1143,6 +1242,7 @@ func loadHeader(ctx context.Context, s Store, key Key, id cid.Cid) (h Header, er
 func decodeHeaderBlock(blk blocks.Block, key Key) (h Header, err error) {
 	env := map[string]interface{}{}
 	if err := cbor.Unmarshal(blk.RawData(), &env); err != nil {
+		log.Debugw("decodeHeaderBlock", "err", err, "data", fmt.Sprintf("%x", blk.RawData()))
 		return h, err
 	}
 
@@ -1151,27 +1251,53 @@ func decodeHeaderBlock(blk blocks.Block, key Key) (h Header, err error) {
 		return h, fmt.Errorf("header is missing info field")
 	}
 
-	log.Debugw("content", "type", fmt.Sprintf("%T", env["content"].(cbor.Tag).Content), "id", env["content"])
-	if content, ok := env["content"]; ok {
-		if h.ContentID, err = cidFromCBORTag(content); err != nil {
-			return h, err
-		}
-	} else {
-		return h, fmt.Errorf("header has no content cid")
-	}
-
 	aead, err := newCipher(key[:])
 	if err != nil {
 		return h, err
 	}
-
 	plaintext, err := aead.Open(nil, encInfo[:aead.NonceSize()], encInfo[aead.NonceSize():], nil)
 	if err != nil {
+		log.Debugw("decodeHeaderBlock info", "err", err)
 		return h, fmt.Errorf("decrypting info: %w", err)
 	}
 
 	if h.Info, err = HeaderInfoFromCBOR(plaintext); err != nil {
+		log.Debugw("decodeHeaderBlock", "err", err)
 		return h, err
+	}
+
+	if meta, ok := env["metadata"].(cbor.Tag); ok {
+		if h.Metadata, err = cidFromCBORTag(meta); err != nil {
+			log.Debugw("decodeHeaderBlock", "err", err)
+			return h, err
+		}
+	}
+
+	if h.Info.Type == base.NTDataFile {
+		// TODO(b5): this is probably the right place to decode content
+		if encValue, ok := env["value"].([]byte); ok {
+			plaintext, err = aead.Open(nil, encValue[:aead.NonceSize()], encValue[aead.NonceSize():], nil)
+			if err != nil {
+				log.Debugw("decodeHeaderBlock value", "err", err)
+				return h, err
+			}
+			var v interface{}
+			if err = cbornode.DecodeInto(plaintext, &v); err != nil {
+				return h, err
+			}
+			h.Value = v
+		} else {
+			return h, fmt.Errorf("datafile header has no value field")
+		}
+	} else {
+		if content, ok := env["content"].(cbor.Tag); ok {
+			if h.ContentID, err = cidFromCBORTag(content); err != nil {
+				log.Debugw("decodeHeaderBlock", "err", err)
+				return h, err
+			}
+		} else {
+			return h, fmt.Errorf("header has no content cid")
+		}
 	}
 
 	return h, nil
@@ -1187,4 +1313,259 @@ func cidFromCBORTag(v interface{}) (cid.Cid, error) {
 		return cid.Undef, fmt.Errorf("expected tag contents to be bytes")
 	}
 	return cid.Cast(d[1:])
+}
+
+type StructuredDataFile interface {
+	fs.File
+	Data() (interface{}, error)
+}
+
+type DataFile struct {
+	fs   Store
+	name string
+	cid  cid.Cid
+
+	ratchet     *ratchet.Spiral
+	header      Header
+	Metadata    *cid.Cid
+	content     interface{}
+	jsonContent *bytes.Buffer
+}
+
+var (
+	_ StructuredDataFile = (*DataFile)(nil)
+	_ base.Node          = (*DataFile)(nil)
+)
+
+func NewDataFile(fs Store, name string, content interface{}, parent BareNamefilter) (*DataFile, error) {
+	in := NewINumber()
+	bnf, err := NewBareNamefilter(parent, in)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DataFile{
+		fs:      fs,
+		name:    name,
+		ratchet: ratchet.NewSpiral(),
+		header: Header{
+			Info: NewHeaderInfo(base.NTDataFile, in, bnf),
+		},
+		content: content,
+	}, nil
+}
+
+func LoadDataFile(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (*DataFile, error) {
+	df := &DataFile{
+		fs:   fs,
+		name: name,
+		cid:  id,
+	}
+
+	blk, err := fs.Blockservice().GetBlock(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeDataFileBlock(df, blk, key)
+}
+
+func decodeDataFileBlock(df *DataFile, blk blocks.Block, key Key) (*DataFile, error) {
+	aead, err := newCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+
+	env := map[string]interface{}{}
+	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
+		return nil, err
+	}
+
+	ciphertext, ok := env["info"].([]byte)
+	if !ok {
+		return nil, fmt.Errorf("malformed private DataFile node %s: missing info bytes", blk.Cid())
+	}
+	plaintext, err := aead.Open(nil, ciphertext[:aead.NonceSize()], ciphertext[aead.NonceSize():], nil)
+	if err != nil {
+		return nil, err
+	}
+
+	df.header.Info, err = HeaderInfoFromCBOR(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	if ciphertext, ok = env["content"].([]byte); !ok {
+		return nil, fmt.Errorf("malformed private DataFile node %s: missing content bytes", blk.Cid())
+	}
+	if plaintext, err = aead.Open(nil, ciphertext[:aead.NonceSize()], ciphertext[aead.NonceSize():], nil); err != nil {
+		return nil, err
+	}
+	var content interface{}
+	if err := cbor.Unmarshal(plaintext, &content); err != nil {
+		return nil, err
+	}
+	df.content = content
+
+	return df, nil
+}
+
+func (df *DataFile) IsBare() bool                   { return false }
+func (df *DataFile) Links() mdstore.Links           { return mdstore.NewLinks() } // TODO(b5): remove Links method?
+func (df *DataFile) Name() string                   { return df.name }
+func (df *DataFile) Size() int64                    { return df.header.Info.Size }
+func (df *DataFile) ModTime() time.Time             { return time.Unix(df.header.Info.Mtime, 0) }
+func (df *DataFile) Mode() fs.FileMode              { return fs.FileMode(df.header.Info.Mode) }
+func (df *DataFile) Type() base.NodeType            { return df.header.Info.Type }
+func (df *DataFile) IsDir() bool                    { return false }
+func (df *DataFile) Sys() interface{}               { return df.fs }
+func (df *DataFile) Cid() cid.Cid                   { return df.cid }
+func (df *DataFile) Stat() (fs.FileInfo, error)     { return df, nil }
+func (df *DataFile) Data() (interface{}, error)     { return df.content, nil }
+func (df *DataFile) BareNamefilter() BareNamefilter { return df.header.Info.BareNamefilter }
+func (df *DataFile) INumber() INumber               { return df.header.Info.INumber }
+func (df *DataFile) Ratchet() *ratchet.Spiral       { return df.ratchet }
+func (df *DataFile) PrivateName() (Name, error) {
+	knf, err := AddKey(df.header.Info.BareNamefilter, Key(df.ratchet.Key()))
+	if err != nil {
+		return "", err
+	}
+	return ToName(knf)
+}
+
+func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
+	// TODO(b5): support history
+	return nil, fmt.Errorf("no history")
+}
+
+func (df *DataFile) Read(p []byte) (n int, err error) {
+	if err = df.ensureContent(); err != nil {
+		return 0, err
+	}
+	return df.jsonContent.Read(p)
+}
+
+func (df *DataFile) ensureContent() (err error) {
+	if df.jsonContent == nil {
+		log.Debugw("DataFile loading content", "name", df.name, "cid", df.cid)
+		buf := &bytes.Buffer{}
+		// TODO(b5): use faster json lib
+		if err := json.NewEncoder(buf).Encode(df.content); err != nil {
+			return err
+		}
+		df.jsonContent = buf
+	}
+	return nil
+}
+
+func (df *DataFile) Close() error { return nil }
+
+func (df *DataFile) SetContents(data interface{}) {
+	df.content = data
+	df.jsonContent = nil
+}
+
+func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
+	if changeDF, ok := change.(public.StructuredDataFile); ok {
+		v, err := changeDF.Data()
+		if err != nil {
+			return result, err
+		}
+		df.SetContents(v)
+		return df.Put()
+	}
+
+	// update is changing from data file to file
+	f := &File{
+		fs:   df.fs,
+		name: df.name,
+		cid:  df.cid,
+		header: Header{
+			Info:     df.header.Info.Copy(),
+			Metadata: df.header.Metadata,
+		},
+		content: change,
+	}
+	f.header.Info.Type = base.NTFile
+	return f.Put()
+}
+
+func (df *DataFile) Put() (result PutResult, err error) {
+	df.ratchet.Inc()
+	key := df.ratchet.Key()
+
+	// df.header.Info.Size = ???
+	df.header.Info.Ratchet = df.ratchet.Encode()
+	df.header.Info.Mtime = base.Timestamp().Unix()
+
+	blk, err := df.encodeBlock(key)
+	if err != nil {
+		return result, err
+	}
+	df.cid = blk.Cid()
+
+	name, err := df.PrivateName()
+	if err != nil {
+		return result, err
+	}
+
+	if err = df.fs.Blockservice().Blockstore().Put(blk); err != nil {
+		return result, err
+	}
+
+	log.Debugw("wrote public data file", "name", df.name, "cid", df.cid.String())
+	return PutResult{
+		PutResult: public.PutResult{
+			Cid:      df.cid,
+			Size:     df.header.Info.Size,
+			Userland: df.cid,
+			Type:     df.header.Info.Type,
+		},
+		Key:     df.ratchet.Key(),
+		Pointer: name,
+	}, nil
+}
+
+func (df *DataFile) AsHistoryEntry() base.HistoryEntry {
+	return base.HistoryEntry{
+		Cid:   df.cid,
+		Size:  df.header.Info.Size,
+		Type:  df.header.Info.Type,
+		Mtime: df.header.Info.Mtime,
+	}
+}
+
+func (df *DataFile) encodeBlock(key Key) (blocks.Block, error) {
+	aead, err := newCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := cbor.Marshal(df.header.Info)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := make([]byte, aead.NonceSize())
+	rand.Read(nonce)
+	cipher := aead.Seal(nil, nonce, data, nil)
+	infoCipher := append(nonce, cipher...)
+
+	data, err = cbor.Marshal(df.content)
+	if err != nil {
+		return nil, err
+	}
+	nonce = nonce[:]
+	rand.Read(nonce)
+	cipher = aead.Seal(nil, nonce, data, nil)
+	contentCipher := append(nonce, cipher...)
+
+	// TODO(b5): link name obfuscation
+	dataFile := map[string]interface{}{
+		"info":     infoCipher,
+		"value":    contentCipher,
+		"metadata": df.Metadata,
+	}
+
+	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
 }

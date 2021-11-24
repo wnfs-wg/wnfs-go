@@ -22,13 +22,10 @@ import (
 	ipfs_corehttp "github.com/ipfs/go-ipfs/core/corehttp"
 	ipfsrepo "github.com/ipfs/go-ipfs/repo"
 	fsrepo "github.com/ipfs/go-ipfs/repo/fsrepo"
-	format "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log"
-	unixfs "github.com/ipfs/go-unixfs"
 	coreiface "github.com/ipfs/interface-go-ipfs-core"
 	caopts "github.com/ipfs/interface-go-ipfs-core/options"
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
-	multihash "github.com/multiformats/go-multihash"
 
 	qfs "github.com/qri-io/qfs"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
@@ -150,58 +147,6 @@ func NewFilesystemFromNode(ctx context.Context, node *core.IpfsNode) (mdstore.Me
 // Type distinguishes this filesystem from others by a unique string prefix
 func (fst Filestore) Type() string {
 	return FilestoreType
-}
-
-func (fs *Filestore) GetNode(ctx context.Context, id cid.Cid) (mdstore.DagNode, error) {
-	node, err := fs.capi.Dag().Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	size, err := node.Size()
-	if err != nil {
-		return nil, err
-	}
-
-	return &ipfsDagNode{
-		id:   id,
-		size: int64(size),
-		node: node,
-	}, nil
-}
-
-func (fs *Filestore) PutNode(links mdstore.Links) (mdstore.PutResult, error) {
-	node := unixfs.EmptyDirNode()
-	// node := &merkledag.ProtoNode{}
-	// node.SetData(unixfs.FolderPBData())
-	node.SetCidBuilder(cid.V1Builder{
-		Codec:    cid.DagProtobuf,
-		MhType:   multihash.SHA2_256,
-		MhLength: -1,
-	})
-	for name, lnk := range links.Map() {
-		if !lnk.Cid.Defined() {
-			return mdstore.PutResult{}, fmt.Errorf("cannot write link %q: empty CID", name)
-		}
-		node.AddRawLink(name, lnk.IPLD())
-	}
-	if _, err := node.EncodeProtobuf(false); err != nil {
-		return mdstore.PutResult{}, err
-	}
-
-	err := fs.capi.Dag().Add(fs.ctx, node)
-	if err != nil {
-		return mdstore.PutResult{}, err
-	}
-	size, err := node.Size()
-	if err != nil {
-		return mdstore.PutResult{}, err
-	}
-
-	return mdstore.PutResult{
-		Cid:  node.Cid(),
-		Size: int64(size),
-	}, err
 }
 
 func (fs *Filestore) GetBlock(ctx context.Context, id cid.Cid) ([]byte, error) {
@@ -431,29 +376,6 @@ func (fs *Filestore) serveAPI() error {
 	// or configurable
 	fmt.Println("starting IPFS HTTP API:")
 	return ipfs_corehttp.ListenAndServe(fs.node, addr, opts...)
-}
-
-type ipfsDagNode struct {
-	id   cid.Cid
-	size int64
-	node format.Node
-}
-
-var _ mdstore.DagNode = (*ipfsDagNode)(nil)
-
-func (n ipfsDagNode) Size() int64  { return n.size }
-func (n ipfsDagNode) Cid() cid.Cid { return n.id }
-func (n ipfsDagNode) Raw() []byte  { return n.node.RawData() }
-func (n ipfsDagNode) Links() mdstore.Links {
-	links := mdstore.NewLinks()
-	for _, link := range n.node.Links() {
-		links.Add(mdstore.Link{
-			Name: link.Name,
-			Cid:  link.Cid,
-			Size: int64(link.Size),
-		})
-	}
-	return links
 }
 
 type ipfsFile struct {

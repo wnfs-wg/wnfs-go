@@ -93,7 +93,7 @@ func TestHistory(t *testing.T) {
 }
 
 func TestHeaderCoding(t *testing.T) {
-	hash, err := multihash.Sum([]byte("hi"), multihash.SHA3_256, -1)
+	hash, err := multihash.Sum([]byte("hi"), base.DefaultMultihashType, -1)
 	require.Nil(t, err)
 	content := cid.NewCidV1(cid.DagCBOR, hash)
 
@@ -122,7 +122,7 @@ func TestHeaderCoding(t *testing.T) {
 }
 
 func TestPrivateLinkBlockCoding(t *testing.T) {
-	hash, err := multihash.Sum([]byte("hi"), multihash.SHA3_256, -1)
+	hash, err := multihash.Sum([]byte("hi"), base.DefaultMultihashType, -1)
 	require.Nil(t, err)
 	fooCid := cid.NewCidV1(cid.DagCBOR, hash)
 

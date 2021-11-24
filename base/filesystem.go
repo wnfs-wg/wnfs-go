@@ -6,7 +6,15 @@ import (
 	"io/fs"
 
 	cid "github.com/ipfs/go-cid"
-	"github.com/qri-io/wnfs-go/mdstore"
+	multihash "github.com/multiformats/go-multihash"
+	mdstore "github.com/qri-io/wnfs-go/mdstore"
+)
+
+const (
+	// LatestVersion is the most recent semantic version of WNFS this
+	// implementation reads/writes
+	LatestVersion        = SemVer("2.0.0dev")
+	DefaultMultihashType = multihash.SHA2_256
 )
 
 const (
@@ -20,9 +28,41 @@ const (
 	UserlandLinkName = "userland"
 )
 
-// LatestVersion is the most recent semantic version of WNFS this implementation
-// reads/writes
-const LatestVersion = SemVer("2.0.0dev")
+const (
+	ModeDefault = 644
+)
+
+type NodeType uint8
+
+const (
+	NTFile NodeType = iota
+	NTDataFile
+	NTDir
+	NTSymlink    // reserved for future use
+	NTUnixFSFile // reserved for future use
+	NTUnixFSDir  // reserved for future use
+)
+
+func (nt NodeType) String() string {
+	switch nt {
+	case NTFile:
+		return "file"
+	case NTDataFile:
+		return "datafile"
+	case NTDir:
+		return "dir"
+	case NTSymlink:
+		return "symlink"
+	case NTUnixFSFile:
+		return "unixFSFile"
+	case NTUnixFSDir:
+		return "unixFSDir"
+	default:
+		return "unknown"
+	}
+}
+
+type SemVer string
 
 var ErrNoLink = fmt.Errorf("no link")
 
@@ -34,9 +74,10 @@ type MerkleDagFS interface {
 
 type Node interface {
 	fs.File
+	fs.FileInfo
 	Cid() cid.Cid
+	Type() NodeType
 	AsHistoryEntry() HistoryEntry
-	AsLink() mdstore.Link
 	History(ctx context.Context, limit int) ([]HistoryEntry, error)
 }
 
@@ -61,7 +102,6 @@ type PutResult interface {
 }
 
 type Header interface {
-	Metadata() Metadata
 	Previous() *cid.Cid
 }
 

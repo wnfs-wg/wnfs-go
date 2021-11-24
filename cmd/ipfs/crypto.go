@@ -14,7 +14,7 @@ import (
 	merkledag "github.com/ipfs/go-merkledag"
 	balanced "github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
-	"github.com/multiformats/go-multihash"
+	base "github.com/qri-io/wnfs-go/base"
 	cipherchunker "github.com/qri-io/wnfs-go/cipherchunker"
 	cipherfile "github.com/qri-io/wnfs-go/cipherfile"
 	mdstore "github.com/qri-io/wnfs-go/mdstore"
@@ -70,7 +70,7 @@ func (fs *Filestore) putEncryptedFile(f fs.File, auth cipher.AEAD) (ipld.Node, e
 	if err != nil {
 		return nil, err
 	}
-	prefix.MhType = multihash.SHA2_256
+	prefix.MhType = base.DefaultMultihashType
 
 	spl, err := cipherchunker.NewCipherSplitter(f, auth, 1024*256)
 	if err != nil {

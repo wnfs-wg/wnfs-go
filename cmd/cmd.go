@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -13,6 +14,7 @@ import (
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
+	"github.com/qri-io/wnfs-go/base"
 	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
 	cli "github.com/urfave/cli/v2"
 )
@@ -78,15 +80,47 @@ func main() {
 				},
 			},
 			{
+				Name:  "stat",
+				Usage: "get stats for a file",
+				Action: func(c *cli.Context) error {
+					fsys := repo.WNFS()
+					f, err := fsys.Open(c.Args().Get(0))
+					if err != nil {
+						return nil
+					}
+					n, ok := f.(base.Node)
+					if !ok {
+						return fmt.Errorf("wnfs did not return a node")
+					}
+					fmt.Printf(`
+cid:	%s
+type:	%s
+size:	%d
+`[1:], n.Cid(), n.Type(), n.Size())
+
+					return nil
+				},
+			},
+			{
 				Name:    "write",
 				Aliases: []string{"add"},
 				Usage:   "add a file to wnfs",
 				Action: func(c *cli.Context) error {
 					path := c.Args().Get(0)
 					file := c.Args().Get(1)
+
+					var f fs.File
 					f, err := os.Open(file)
 					if err != nil {
 						return err
+					}
+
+					if filepath.Ext(file) == ".json" {
+						var v interface{}
+						if err = json.NewDecoder(f).Decode(&v); err != nil {
+							return err
+						}
+						f = wnfs.NewDataFile(filepath.Base(path), v)
 					}
 
 					defer repo.Close()
@@ -270,6 +304,13 @@ func main() {
 					{
 						Name:  "get",
 						Usage: "",
+						Flags: []cli.Flag{
+							&cli.BoolFlag{
+								Name:  "raw",
+								Value: false,
+								Usage: "don't decode CBOR nodes to JSON",
+							},
+						},
 						Action: func(c *cli.Context) error {
 							cmdCtx, cancel := context.WithCancel(ctx)
 							defer cancel()
@@ -283,6 +324,11 @@ func main() {
 							if err != nil {
 								return err
 							}
+							if c.Bool("raw") {
+								fmt.Printf("%x\n", blk.RawData())
+								return nil
+							}
+
 							v := map[string]interface{}{}
 							if err := cbornode.DecodeInto(blk.RawData(), &v); err != nil {
 								return err
