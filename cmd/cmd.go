@@ -246,7 +246,7 @@ size:	%d
 						errExit("error: opening previous WNFS %s:\n%s\n", entries[1].Cid, err.Error())
 					}
 
-					diff, err := fsdiff.Unix("", "", fs, prev)
+					diff, err := fsdiff.Unix("", "", prev, fs)
 					if err != nil {
 						errExit("error: constructing diff: %s", err)
 					}
