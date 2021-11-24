@@ -536,15 +536,6 @@ func (r *rootTree) Mode() fs.FileMode   { return fs.FileMode(r.h.Info.Mode) }
 func (r *rootTree) Type() base.NodeType { return r.h.Info.Type }
 func (r *rootTree) ModTime() time.Time  { return time.Unix(r.h.Info.Mtime, 0) }
 func (r *rootTree) Sys() interface{}    { return r.fs }
-func (t *rootTree) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   "",
-		Cid:    t.id,
-		Size:   t.h.Info.Size,
-		Mtime:  t.h.Info.Mtime,
-		IsFile: false,
-	}
-}
 
 func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(

@@ -78,7 +78,6 @@ type Node interface {
 	Cid() cid.Cid
 	Type() NodeType
 	AsHistoryEntry() HistoryEntry
-	AsLink() mdstore.Link
 	History(ctx context.Context, limit int) ([]HistoryEntry, error)
 }
 

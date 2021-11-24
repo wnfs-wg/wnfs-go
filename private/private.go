@@ -329,16 +329,6 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
-func (pt *Tree) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   pt.name,
-		Cid:    pt.cid,
-		Size:   pt.header.Info.Size,
-		IsFile: false,
-		Mtime:  pt.header.Info.Mtime,
-	}
-}
-
 func (pt *Tree) ensureLinks(ctx context.Context) error {
 	if pt.links == nil {
 		blk, err := pt.fs.Blockservice().GetBlock(ctx, pt.header.ContentID)
@@ -853,16 +843,6 @@ func (pf *File) PrivateName() (Name, error) {
 func (pf *File) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
 		// TODO(b5): finish
-	}
-}
-
-func (pf *File) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   pf.name,
-		Cid:    pf.cid,
-		Size:   pf.header.Info.Size,
-		IsFile: true,
-		Mtime:  pf.header.Info.Mtime,
 	}
 }
 
@@ -1451,16 +1431,6 @@ func (df *DataFile) PrivateName() (Name, error) {
 		return "", err
 	}
 	return ToName(knf)
-}
-
-func (df *DataFile) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name: df.name,
-		// Cid:    df.h.cid,
-		// Size:   df.h.Size,
-		IsFile: true,
-		// Mtime:  df.metadata.UnixMeta.Mtime,
-	}
 }
 
 func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {

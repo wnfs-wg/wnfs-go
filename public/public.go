@@ -263,15 +263,6 @@ func (t *PublicTree) Sys() interface{}           { return t.fs }
 func (t *PublicTree) Store() base.MerkleDagFS    { return t.fs }
 func (t *PublicTree) Cid() cid.Cid               { return t.cid }
 func (t *PublicTree) Stat() (fs.FileInfo, error) { return t, nil }
-func (t *PublicTree) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   t.name,
-		Cid:    t.cid,
-		Size:   t.h.Info.Size,
-		IsFile: false,
-		Mtime:  t.h.Info.Mtime,
-	}
-}
 
 func (t *PublicTree) Read(p []byte) (n int, err error) {
 	return -1, errors.New("cannot read directory")
@@ -746,15 +737,6 @@ func (f *PublicFile) Sys() interface{}           { return f.fs }
 func (f *PublicFile) Store() base.MerkleDagFS    { return f.fs }
 func (f *PublicFile) Cid() cid.Cid               { return f.cid }
 func (f *PublicFile) Stat() (fs.FileInfo, error) { return f, nil }
-func (f *PublicFile) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name:   f.name,
-		Cid:    f.cid,
-		Size:   f.h.Info.Size,
-		IsFile: true,
-		Mtime:  f.h.Info.Mtime,
-	}
-}
 
 func (f *PublicFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	return history(ctx, f, maxRevs)
@@ -1011,16 +993,6 @@ func (df *DataFile) Cid() cid.Cid               { return df.cid }
 func (df *DataFile) Stat() (fs.FileInfo, error) { return df, nil }
 func (df *DataFile) Data() (interface{}, error) { return df.content, nil }
 func (df *DataFile) Type() base.NodeType        { return base.NTDataFile }
-
-func (df *DataFile) AsLink() mdstore.Link {
-	return mdstore.Link{
-		Name: df.name,
-		// Cid:    df.h.cid,
-		// Size:   df.h.Size,
-		IsFile: true,
-		// Mtime:  df.metadata.UnixMeta.Mtime,
-	}
-}
 
 func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	// TODO(b5): support history
