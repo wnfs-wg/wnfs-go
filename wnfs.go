@@ -430,8 +430,9 @@ type rootTree struct {
 	h *rootHeader
 
 	// Pretty   *base.BareTree
-	Public  *public.PublicTree
-	Private *private.Root
+	metadata *public.DataFile
+	Public   *public.PublicTree
+	Private  *private.Root
 }
 
 var _ base.Tree = (*rootTree)(nil)
@@ -514,7 +515,15 @@ func (r *rootTree) Put() (result mdstore.PutResult, err error) {
 		r.h.Private = &id
 	}
 
-	// TODO(by): pretty, metadata links on header
+	if r.metadata != nil {
+		if _, err = r.metadata.Put(); err != nil {
+			return result, err
+		}
+		id := r.metadata.Cid()
+		r.h.Metadata = &id
+	}
+
+	// TODO(by): build pretty link
 
 	blk, err := r.h.encodeBlock()
 	if err != nil {
@@ -536,6 +545,18 @@ func (r *rootTree) Mode() fs.FileMode   { return fs.FileMode(r.h.Info.Mode) }
 func (r *rootTree) Type() base.NodeType { return r.h.Info.Type }
 func (r *rootTree) ModTime() time.Time  { return time.Unix(r.h.Info.Mtime, 0) }
 func (r *rootTree) Sys() interface{}    { return r.fs }
+
+func (r *rootTree) SetMeta(md map[string]interface{}) error {
+	r.metadata = public.NewDataFile(r.fs, "", md)
+	return nil
+}
+
+func (r *rootTree) Meta() (f base.LinkedDataFile, err error) {
+	if r.metadata == nil && r.h.Metadata != nil {
+		r.metadata, err = public.LoadDataFile(r.fs.Context(), r.fs, base.MetadataLinkName, *r.h.Metadata)
+	}
+	return r.metadata, err
+}
 
 func (r *rootTree) Links() mdstore.Links {
 	links := mdstore.NewLinks(

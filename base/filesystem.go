@@ -79,10 +79,17 @@ type Node interface {
 	Type() NodeType
 	AsHistoryEntry() HistoryEntry
 	History(ctx context.Context, limit int) ([]HistoryEntry, error)
+	Meta() (LinkedDataFile, error)
 }
 
 type File interface {
 	Node
+}
+
+type LinkedDataFile interface {
+	fs.File
+	fs.ReadDirFile
+	Data() (interface{}, error)
 }
 
 type Tree interface {

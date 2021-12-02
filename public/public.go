@@ -264,6 +264,18 @@ func (t *PublicTree) Store() base.MerkleDagFS    { return t.fs }
 func (t *PublicTree) Cid() cid.Cid               { return t.cid }
 func (t *PublicTree) Stat() (fs.FileInfo, error) { return t, nil }
 
+func (t *PublicTree) SetMeta(md map[string]interface{}) error {
+	t.metadata = NewDataFile(t.fs, "", md)
+	return nil
+}
+
+func (t *PublicTree) Meta() (f base.LinkedDataFile, err error) {
+	if t.metadata == nil && t.h.Metadata != nil {
+		t.metadata, err = LoadDataFile(t.fs.Context(), t.fs, base.MetadataLinkName, *t.h.Metadata)
+	}
+	return t.metadata, err
+}
+
 func (t *PublicTree) Read(p []byte) (n int, err error) {
 	return -1, errors.New("cannot read directory")
 }
@@ -566,8 +578,8 @@ func (t *PublicTree) getOrCreateDirectChildTree(name string) (*PublicTree, error
 }
 
 func (t *PublicTree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
-	if sdFile, ok := f.(StructuredDataFile); ok {
-		return t.createOrUpdateChildSDFile(name, sdFile)
+	if sdFile, ok := f.(base.LinkedDataFile); ok {
+		return t.createOrUpdateChildLDFile(name, sdFile)
 	}
 
 	fi, err := f.Stat()
@@ -611,7 +623,7 @@ func (t *PublicTree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.
 	return res, nil
 }
 
-func (t *PublicTree) createOrUpdateChildSDFile(name string, sdf StructuredDataFile) (base.PutResult, error) {
+func (t *PublicTree) createOrUpdateChildLDFile(name string, sdf base.LinkedDataFile) (base.PutResult, error) {
 	ctx := context.TODO()
 	content, err := sdf.Data()
 	if err != nil {
@@ -634,8 +646,8 @@ func (t *PublicTree) createOrUpdateChildSDFile(name string, sdf StructuredDataFi
 func (t *PublicTree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
 	ctx := context.TODO()
 
-	if sdFile, ok := f.(StructuredDataFile); ok {
-		return t.createOrUpdateChildSDFile(name, sdFile)
+	if sdFile, ok := f.(base.LinkedDataFile); ok {
+		return t.createOrUpdateChildLDFile(name, sdFile)
 	}
 
 	if link := t.userland.Get(name); link != nil {
@@ -737,6 +749,13 @@ func (f *PublicFile) Sys() interface{}           { return f.fs }
 func (f *PublicFile) Store() base.MerkleDagFS    { return f.fs }
 func (f *PublicFile) Cid() cid.Cid               { return f.cid }
 func (f *PublicFile) Stat() (fs.FileInfo, error) { return f, nil }
+
+func (f *PublicFile) Meta() (res base.LinkedDataFile, err error) {
+	if f.metadata == nil && f.h.Metadata != nil {
+		f.metadata, err = LoadDataFile(f.fs.Context(), f.fs, base.MetadataLinkName, *f.h.Metadata)
+	}
+	return f.metadata, err
+}
 
 func (f *PublicFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	return history(ctx, f, maxRevs)
@@ -886,11 +905,6 @@ func loadNodeFromSkeletonInfo(ctx context.Context, fs base.MerkleDagFS, name str
 	return LoadTree(ctx, fs, name, info.Cid)
 }
 
-type StructuredDataFile interface {
-	fs.File
-	Data() (interface{}, error)
-}
-
 type DataFile struct {
 	fs   base.MerkleDagFS
 	name string
@@ -904,8 +918,8 @@ type DataFile struct {
 }
 
 var (
-	_ StructuredDataFile = (*DataFile)(nil)
-	_ base.Node          = (*DataFile)(nil)
+	_ base.LinkedDataFile = (*DataFile)(nil)
+	_ base.Node           = (*DataFile)(nil)
 )
 
 func NewDataFile(fs base.MerkleDagFS, name string, content interface{}) *DataFile {
@@ -993,6 +1007,9 @@ func (df *DataFile) Cid() cid.Cid               { return df.cid }
 func (df *DataFile) Stat() (fs.FileInfo, error) { return df, nil }
 func (df *DataFile) Data() (interface{}, error) { return df.content, nil }
 func (df *DataFile) Type() base.NodeType        { return base.NTDataFile }
+func (df *DataFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	return nil, fmt.Errorf("linked data file reading incomplete")
+}
 
 func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	// TODO(b5): support history
@@ -1003,6 +1020,15 @@ func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEnt
 func (df *DataFile) Read(p []byte) (n int, err error) {
 	df.ensureContent()
 	return df.jsonContent.Read(p)
+}
+
+func (df *DataFile) SetMeta(m *DataFile) error {
+	// df.metadata = m
+	return nil
+}
+
+func (df *DataFile) Meta() (base.LinkedDataFile, error) {
+	return nil, fmt.Errorf("unfinished: public.DataFile.Meta()")
 }
 
 func (df *DataFile) ensureContent() (err error) {

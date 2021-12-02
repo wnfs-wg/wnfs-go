@@ -329,6 +329,10 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
+func (pt *Tree) Meta() (base.LinkedDataFile, error) {
+	return nil, fmt.Errorf("unfinished: private.Tree.Meta()")
+}
+
 func (pt *Tree) ensureLinks(ctx context.Context) error {
 	if pt.links == nil {
 		blk, err := pt.fs.Blockservice().GetBlock(ctx, pt.header.ContentID)
@@ -682,7 +686,7 @@ func (pt *Tree) createOrUpdateChildFile(ctx context.Context, name string, f fs.F
 		return prev.Update(f)
 	}
 
-	if dataFile, ok := f.(StructuredDataFile); ok {
+	if dataFile, ok := f.(base.LinkedDataFile); ok {
 		v, err := dataFile.Data()
 		if err != nil {
 			return nil, err
@@ -832,6 +836,10 @@ func (pf *File) Size() int64                    { return pf.header.Info.Size }
 func (pf *File) Sys() interface{}               { return pf.fs }
 func (pf *File) Stat() (fs.FileInfo, error)     { return pf, nil }
 
+func (pf *File) Meta() (base.LinkedDataFile, error) {
+	return nil, fmt.Errorf("unfinished: private.File.Meta()")
+}
+
 func (pf *File) PrivateName() (Name, error) {
 	knf, err := AddKey(pf.header.Info.BareNamefilter, Key(pf.ratchet.Key()))
 	if err != nil {
@@ -880,7 +888,7 @@ func (pf *File) ensureContent() (err error) {
 }
 
 func (pf *File) Update(change fs.File) (result PutResult, err error) {
-	if changeDF, ok := change.(public.StructuredDataFile); ok {
+	if changeDF, ok := change.(base.LinkedDataFile); ok {
 		v, err := changeDF.Data()
 		if err != nil {
 			return result, err
@@ -1315,11 +1323,6 @@ func cidFromCBORTag(v interface{}) (cid.Cid, error) {
 	return cid.Cast(d[1:])
 }
 
-type StructuredDataFile interface {
-	fs.File
-	Data() (interface{}, error)
-}
-
 type DataFile struct {
 	fs   Store
 	name string
@@ -1333,8 +1336,8 @@ type DataFile struct {
 }
 
 var (
-	_ StructuredDataFile = (*DataFile)(nil)
-	_ base.Node          = (*DataFile)(nil)
+	_ base.LinkedDataFile = (*DataFile)(nil)
+	_ base.Node           = (*DataFile)(nil)
 )
 
 func NewDataFile(fs Store, name string, content interface{}, parent BareNamefilter) (*DataFile, error) {
@@ -1433,6 +1436,14 @@ func (df *DataFile) PrivateName() (Name, error) {
 	return ToName(knf)
 }
 
+func (df *DataFile) Meta() (base.LinkedDataFile, error) {
+	return nil, fmt.Errorf("unfinished: private.DataFile.Meta")
+}
+
+func (df *DataFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	return nil, fmt.Errorf("unfinished: private.DataFile.ReadDir")
+}
+
 func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	// TODO(b5): support history
 	return nil, fmt.Errorf("no history")
@@ -1466,7 +1477,7 @@ func (df *DataFile) SetContents(data interface{}) {
 }
 
 func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
-	if changeDF, ok := change.(public.StructuredDataFile); ok {
+	if changeDF, ok := change.(base.LinkedDataFile); ok {
 		v, err := changeDF.Data()
 		if err != nil {
 			return result, err
