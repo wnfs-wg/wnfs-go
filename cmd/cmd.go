@@ -29,13 +29,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// var (
-	// 	fs         wnfs.WNFS
-	// 	store      mdstore.MerkleDagStore
-	// 	state      *Repo
-	// 	updateRepo func()
-	// )
-
 	var repo *Repo
 
 	app := &cli.App{
@@ -241,7 +234,7 @@ size:	%d
 						return err
 					}
 
-					prev, err := wnfs.FromCID(cmdCtx, repo.DagStore(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
+					prev, err := wnfs.FromCID(cmdCtx, repo.Store().Blockservice(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
 					if err != nil {
 						errExit("error: opening previous WNFS %s:\n%s\n", entries[1].Cid, err.Error())
 					}
@@ -291,7 +284,7 @@ size:	%d
 						Action: func(c *cli.Context) error {
 							cmdCtx, cancel := context.WithCancel(ctx)
 							defer cancel()
-							keys, err := repo.DagStore().Blockservice().Blockstore().AllKeysChan(cmdCtx)
+							keys, err := repo.Store().Blockservice().Blockstore().AllKeysChan(cmdCtx)
 							if err != nil {
 								return err
 							}
@@ -320,7 +313,7 @@ size:	%d
 								return err
 							}
 
-							blk, err := repo.DagStore().Blockservice().GetBlock(cmdCtx, id)
+							blk, err := repo.Store().Blockservice().GetBlock(cmdCtx, id)
 							if err != nil {
 								return err
 							}
@@ -354,7 +347,7 @@ size:	%d
 						return err
 					}
 
-					diag, err := wnfs.HAMTContents(cmdCtx, repo.DagStore().Blockservice(), id)
+					diag, err := wnfs.HAMTContents(cmdCtx, repo.Store().Blockservice(), id)
 					if err != nil {
 						return err
 					}

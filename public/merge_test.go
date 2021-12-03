@@ -13,28 +13,27 @@ func TestBasicTreeMerge(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := newMemTestStore(ctx, t)
-	fs := mdfs{ctx: ctx, ds: store}
 
 	t.Run("no_common_history", func(t *testing.T) {
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 
-		b := NewEmptyTree(fs, "")
+		b := NewEmptyTree(store, "")
 		b.Add(base.MustPath("some_other_fs.txt"), base.NewMemfileBytes("some_other_fs.txt", []byte("some other filesystem")))
 
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
-		_, err = LoadTree(ctx, fs, "", res.Cid)
+		_, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 	})
 
 	t.Run("fast_forward", func(t *testing.T) {
 		// local node is behind, fast-forward
-		a := NewEmptyTree(fs, "a")
+		a := NewEmptyTree(store, "a")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 		_, err = b.Add(base.MustPath("goodbye.txt"), base.NewMemfileBytes("goodbye.txt", []byte("goodbye!")))
 		require.Nil(t, err)
@@ -45,11 +44,11 @@ func TestBasicTreeMerge(t *testing.T) {
 	})
 
 	t.Run("local_ahead", func(t *testing.T) {
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 
 		// local node is ahead, no-op for local merge
@@ -66,14 +65,13 @@ func TestTreeMergeCommit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := newMemTestStore(ctx, t)
-	fs := mdfs{ctx: ctx, ds: store}
 
 	t.Run("no_conflict_merge", func(t *testing.T) {
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 
 		_, err = a.Add(base.MustPath("bonjour.txt"), base.NewMemfileBytes("bonjour.txt", []byte("bonjour!")))
@@ -86,7 +84,7 @@ func TestTreeMergeCommit(t *testing.T) {
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
 		assert.Equal(t, base.MTMergeCommit, res.Type)
-		a, err = LoadTree(ctx, fs, "", res.Cid)
+		a, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 		assert.NotNil(t, a.h.Merge)
 		mustDirChildren(t, a, []string{
@@ -99,11 +97,11 @@ func TestTreeMergeCommit(t *testing.T) {
 	})
 
 	t.Run("remote_overwrites_local_file", func(t *testing.T) {
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 
 		_, err = b.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello **2**, written on remote")))
@@ -116,7 +114,7 @@ func TestTreeMergeCommit(t *testing.T) {
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
 		assert.Equal(t, base.MTMergeCommit, res.Type)
-		a, err = LoadTree(ctx, fs, "", res.Cid)
+		a, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 		mustDirChildren(t, a, []string{
 			"goodbye.txt",
@@ -126,11 +124,11 @@ func TestTreeMergeCommit(t *testing.T) {
 	})
 
 	t.Run("local_overwrites_remote_file", func(t *testing.T) {
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 		_, err = b.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello **2** (remote)")))
 		require.Nil(t, err)
@@ -144,7 +142,7 @@ func TestTreeMergeCommit(t *testing.T) {
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
 		assert.Equal(t, base.MTMergeCommit, res.Type)
-		a, err = LoadTree(ctx, fs, "", res.Cid)
+		a, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 		mustDirChildren(t, a, []string{
 			"hello.txt",
@@ -157,11 +155,11 @@ func TestTreeMergeCommit(t *testing.T) {
 TODO (b5): This implementation makes it difficult to delete files. The file here
 is restored upon merge, and would need to be removed in *both* trees to be 
 removed entirely. should consult spec for correctness`[1:])
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 		_, err = b.Rm(base.MustPath("hello.txt"))
 		require.Nil(t, err)
@@ -173,7 +171,7 @@ removed entirely. should consult spec for correctness`[1:])
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
 		assert.Equal(t, base.MTMergeCommit, res.Type)
-		a, err = LoadTree(ctx, fs, "", res.Cid)
+		a, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 		mustDirChildren(t, a, []string{
 			"goodbye.txt",
@@ -186,11 +184,11 @@ removed entirely. should consult spec for correctness`[1:])
 TODO (b5): This implementation makes it difficult to delete files. The file here
 is restored upon merge, and would need to be removed in *both* trees to be 
 removed entirely. should consult spec for correctness`[1:])
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 		_, err = a.Rm(base.MustPath("hello.txt"))
 		require.Nil(t, err)
@@ -202,7 +200,7 @@ removed entirely. should consult spec for correctness`[1:])
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
 		assert.Equal(t, base.MTMergeCommit, res.Type)
-		a, err = LoadTree(ctx, fs, "", res.Cid)
+		a, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 		mustDirChildren(t, a, []string{
 			"goodbye.txt",
@@ -218,11 +216,11 @@ removed entirely. should consult spec for correctness`[1:])
 	})
 
 	t.Run("remote_overwrites_local_file_with_directory", func(t *testing.T) {
-		a := NewEmptyTree(fs, "")
+		a := NewEmptyTree(store, "")
 		_, err := a.Add(base.MustPath("hello"), base.NewMemfileBytes("hello", []byte("hello!")))
 		require.Nil(t, err)
 
-		b, err := LoadTree(ctx, a.fs, a.Name(), a.Cid())
+		b, err := LoadTree(ctx, a.store, a.Name(), a.Cid())
 		require.Nil(t, err)
 		_, err = a.Add(base.MustPath("goodbye.txt"), base.NewMemfileBytes("goodbye.txt", []byte("goodbye!")))
 		require.Nil(t, err)
@@ -236,7 +234,7 @@ removed entirely. should consult spec for correctness`[1:])
 		res, err := Merge(ctx, a, b)
 		require.Nil(t, err)
 		assert.Equal(t, base.MTMergeCommit, res.Type)
-		a, err = LoadTree(ctx, fs, "", res.Cid)
+		a, err = LoadTree(ctx, store, "", res.Cid)
 		require.Nil(t, err)
 		mustDirChildren(t, a, []string{
 			"goodbye.txt",

@@ -11,7 +11,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	wnfs "github.com/qri-io/wnfs-go"
 	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
+	"github.com/qri-io/wnfs-go/public"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
@@ -37,7 +37,7 @@ type Repo struct {
 	path  string
 	fs    wnfs.WNFS
 	rs    ratchet.Store
-	ds    mdstore.MerkleDagStore
+	store public.Store
 	state *State
 }
 
@@ -87,28 +87,28 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 	var fs wnfs.WNFS
 	if state.RootCID.Equals(cid.Cid{}) {
 		fmt.Printf("creating new wnfs filesystem...")
-		if fs, err = wnfs.NewEmptyFS(ctx, store, rs, state.RootKey); err != nil {
+		if fs, err = wnfs.NewEmptyFS(ctx, store.Blockservice(), rs, state.RootKey); err != nil {
 			return nil, fmt.Errorf("error: creating empty WNFS: %s\n", err)
 		}
 		fmt.Println("done")
 	} else {
-		if fs, err = wnfs.FromCID(ctx, store, rs, state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
+		if fs, err = wnfs.FromCID(ctx, store.Blockservice(), rs, state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
 			return nil, fmt.Errorf("error: opening WNFS CID %s:\n%s\n", state.RootCID, err.Error())
 		}
 	}
 
 	return &Repo{
 		path:  path,
-		ds:    store,
+		store: store,
 		fs:    fs,
 		rs:    rs,
 		state: state,
 	}, nil
 }
 
-func (r *Repo) DagStore() mdstore.MerkleDagStore { return r.ds }
-func (r *Repo) RatchetStore() ratchet.Store      { return r.rs }
-func (r *Repo) WNFS() wnfs.WNFS                  { return r.fs }
+func (r *Repo) Store() public.Store         { return r.store }
+func (r *Repo) RatchetStore() ratchet.Store { return r.rs }
+func (r *Repo) WNFS() wnfs.WNFS             { return r.fs }
 func (r *Repo) Close() error {
 	r.state.RootCID = r.fs.Cid()
 	r.state.RootKey = r.fs.RootKey()

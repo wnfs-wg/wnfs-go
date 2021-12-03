@@ -2,8 +2,6 @@ package public
 
 import (
 	"context"
-	"fmt"
-	"io/fs"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -13,8 +11,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
-	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
+	mockblocks "github.com/qri-io/wnfs-go/mockblocks"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )
@@ -30,18 +27,17 @@ func TestFileMetadata(t *testing.T) {
 	defer cancel()
 
 	store := newMemTestStore(ctx, t)
-	fs := mdfs{ctx: ctx, ds: store}
 	expect := map[string]interface{}{
 		"foo": "bar",
 	}
 
-	root := NewEmptyTree(fs, "root")
+	root := NewEmptyTree(store, "root")
 	root.SetMeta(expect)
 
 	res, err := root.Put()
 	require.Nil(t, err)
 
-	root, err = LoadTree(ctx, fs, "root", res.CID())
+	root, err = LoadTree(ctx, store, "root", res.CID())
 	require.Nil(t, err)
 
 	md, err := root.Meta()
@@ -58,37 +54,36 @@ func TestTreeSkeleton(t *testing.T) {
 	defer cancel()
 
 	store := newMemTestStore(ctx, t)
-	fs := mdfs{ctx: ctx, ds: store}
 
-	root := NewEmptyTree(fs, "")
+	root := NewEmptyTree(store, "")
 	root.Add(base.MustPath("foo/bar/baz/hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 	root.Add(base.MustPath("bar/baz/goodbye"), base.NewMemfileBytes("goodbye", []byte(`goodbye`)))
 	root.Add(base.MustPath("some.json"), base.NewMemfileBytes("some.json", []byte(`{"oh":"hai}`)))
 
-	expect := base.Skeleton{
-		"bar": base.SkeletonInfo{
-			SubSkeleton: base.Skeleton{
-				"baz": base.SkeletonInfo{
-					SubSkeleton: base.Skeleton{
-						"goodbye": base.SkeletonInfo{IsFile: true},
+	expect := Skeleton{
+		"bar": SkeletonInfo{
+			SubSkeleton: Skeleton{
+				"baz": SkeletonInfo{
+					SubSkeleton: Skeleton{
+						"goodbye": SkeletonInfo{IsFile: true},
 					},
 				},
 			},
 		},
-		"foo": base.SkeletonInfo{
-			SubSkeleton: base.Skeleton{
-				"bar": base.SkeletonInfo{
-					SubSkeleton: base.Skeleton{
-						"baz": base.SkeletonInfo{
-							SubSkeleton: base.Skeleton{
-								"hello.txt": base.SkeletonInfo{IsFile: true},
+		"foo": SkeletonInfo{
+			SubSkeleton: Skeleton{
+				"bar": SkeletonInfo{
+					SubSkeleton: Skeleton{
+						"baz": SkeletonInfo{
+							SubSkeleton: Skeleton{
+								"hello.txt": SkeletonInfo{IsFile: true},
 							},
 						},
 					},
 				},
 			},
 		},
-		"some.json": base.SkeletonInfo{IsFile: true},
+		"some.json": SkeletonInfo{IsFile: true},
 	}
 
 	got, err := root.Skeleton()
@@ -105,9 +100,8 @@ func TestHistory(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := newMemTestStore(ctx, t)
-	fs := mdfs{ctx: ctx, ds: store}
 
-	tree := NewEmptyTree(fs, "a")
+	tree := NewEmptyTree(store, "a")
 	_, err := tree.Add(base.MustPath("hello.txt"), base.NewMemfileBytes("hello.txt", []byte("hello!")))
 	require.Nil(t, err)
 	_, err = tree.Add(base.MustPath("salut.txt"), base.NewMemfileBytes("hello.txt", []byte("salut!")))
@@ -142,29 +136,17 @@ func TestDataFileCoding(t *testing.T) {
 	defer cancel()
 
 	store := newMemTestStore(ctx, t)
-	fs := mdfs{ctx: ctx, ds: store}
 
 	data := []interface{}{"oh", "hai"}
-	df := NewDataFile(fs, "data_file", data)
+	df := NewDataFile(store, "data_file", data)
 	_, err := df.Put()
 	require.Nil(t, err)
 
-	got, err := LoadDataFile(ctx, fs, df.Name(), df.Cid())
+	got, err := LoadDataFile(ctx, store, df.Name(), df.Cid())
 	require.Nil(t, err)
 
 	assert.Equal(t, df, got)
 }
-
-type mdfs struct {
-	ctx context.Context
-	ds  mdstore.MerkleDagStore
-}
-
-var _ base.MerkleDagFS = (*mdfs)(nil)
-
-func (fs mdfs) Open(path string) (fs.File, error) { return nil, fmt.Errorf("shim MDFS cannot open") }
-func (fs mdfs) Context() context.Context          { return fs.ctx }
-func (fs mdfs) DagStore() mdstore.MerkleDagStore  { return fs.ds }
 
 type fataler interface {
 	Name() string
@@ -172,16 +154,16 @@ type fataler interface {
 	Fatal(args ...interface{})
 }
 
-func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
+func newMemTestStore(ctx context.Context, f fataler) Store {
 	f.Helper()
-	store, err := mdstore.NewMerkleDagStore(ctx, mdstoremock.NewOfflineMemBlockservice())
+	store, err := NewStore(ctx, mockblocks.NewOfflineMemBlockservice())
 	if err != nil {
 		f.Fatal(err)
 	}
 	return store
 }
 
-func mustHistCids(t *testing.T, tree *PublicTree, path base.Path) []cid.Cid {
+func mustHistCids(t *testing.T, tree *Tree, path base.Path) []cid.Cid {
 	t.Helper()
 	n, err := tree.Get(path)
 	require.Nil(t, err)
@@ -194,7 +176,7 @@ func mustHistCids(t *testing.T, tree *PublicTree, path base.Path) []cid.Cid {
 	return ids
 }
 
-func mustDirChildren(t *testing.T, dir *PublicTree, ch []string) {
+func mustDirChildren(t *testing.T, dir *Tree, ch []string) {
 	t.Helper()
 	ents, err := dir.ReadDir(-1)
 	require.Nil(t, err)
@@ -207,7 +189,7 @@ func mustDirChildren(t *testing.T, dir *PublicTree, ch []string) {
 	assert.Equal(t, ch, got)
 }
 
-func mustFileContents(t *testing.T, dir *PublicTree, path, content string) {
+func mustFileContents(t *testing.T, dir *Tree, path, content string) {
 	t.Helper()
 	f, err := dir.Get(base.MustPath(path))
 	require.Nil(t, err)

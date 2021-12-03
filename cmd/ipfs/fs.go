@@ -28,7 +28,7 @@ import (
 	corepath "github.com/ipfs/interface-go-ipfs-core/path"
 
 	qfs "github.com/qri-io/qfs"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
+	"github.com/qri-io/wnfs-go/public"
 )
 
 var (
@@ -54,7 +54,7 @@ func (fs *Filestore) StoreType() string { return FilestoreType }
 
 // NewFilesystem creates a new local filesystem PathResolver
 // with no options
-func NewFilesystem(ctx context.Context, cfgMap map[string]interface{}) (mdstore.MerkleDagStore, error) {
+func NewFilesystem(ctx context.Context, cfgMap map[string]interface{}) (public.Store, error) {
 	cfg, err := mapToConfig(cfgMap)
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func NewFilesystem(ctx context.Context, cfgMap map[string]interface{}) (mdstore.
 }
 
 // NewFilesystemFromNode wraps an existing IPFS node with a qfs.Filesystem
-func NewFilesystemFromNode(ctx context.Context, node *core.IpfsNode) (mdstore.MerkleDagStore, error) {
+func NewFilesystemFromNode(ctx context.Context, node *core.IpfsNode) (public.Store, error) {
 	capi, err := coreapi.NewCoreAPI(node)
 	if err != nil {
 		return nil, err
@@ -145,9 +145,9 @@ func NewFilesystemFromNode(ctx context.Context, node *core.IpfsNode) (mdstore.Me
 }
 
 // Type distinguishes this filesystem from others by a unique string prefix
-func (fst Filestore) Type() string {
-	return FilestoreType
-}
+func (fst Filestore) Type() string { return FilestoreType }
+
+func (fst Filestore) Context() context.Context { return fst.ctx }
 
 func (fs *Filestore) GetBlock(ctx context.Context, id cid.Cid) ([]byte, error) {
 	r, err := fs.capi.Block().Get(ctx, corepath.IpfsPath(id))
@@ -165,23 +165,23 @@ func (fs *Filestore) PutBlock(d []byte) (id cid.Cid, err error) {
 	return bs.Path().Root(), nil
 }
 
-func (fs *Filestore) PutFile(f fs.File) (mdstore.PutResult, error) {
+func (fs *Filestore) PutFile(f fs.File) (public.PutResult, error) {
 	path, err := fs.capi.Unixfs().Add(fs.ctx, files.NewReaderFile(f), caopts.Unixfs.CidVersion(1))
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return public.PutResult{}, err
 	}
 
 	storedFile, err := fs.capi.Unixfs().Get(fs.ctx, path)
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return public.PutResult{}, err
 	}
 
 	size, err := storedFile.Size()
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return public.PutResult{}, err
 	}
 
-	return mdstore.PutResult{
+	return public.PutResult{
 		Cid:  path.Root(),
 		Size: size,
 	}, nil

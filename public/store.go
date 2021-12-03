@@ -1,13 +1,11 @@
-package mdstore
+package public
 
 import (
 	"context"
 	"fmt"
 	"io"
 	"io/fs"
-	"sort"
 
-	blocks "github.com/ipfs/go-block-format"
 	blockservice "github.com/ipfs/go-blockservice"
 	cid "github.com/ipfs/go-cid"
 	cidutil "github.com/ipfs/go-cidutil"
@@ -15,49 +13,60 @@ import (
 	chunker "github.com/ipfs/go-ipfs-chunker"
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	format "github.com/ipfs/go-ipld-format"
-	golog "github.com/ipfs/go-log"
 	merkledag "github.com/ipfs/go-merkledag"
 	balanced "github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
 	unixfsio "github.com/ipfs/go-unixfs/io"
 	multihash "github.com/multiformats/go-multihash"
+	base "github.com/qri-io/wnfs-go/base"
 )
 
-var log = golog.Logger("wnfs")
-
-// MerkleDagStore is a store of Content-Addressed block data indexed by merkle
+// Store is a store of Content-Addressed block data indexed by merkle
 // proofs. It's an abstraction over IPFS that defines the required feature set
 // to run wnfs
-type MerkleDagStore interface {
+type Store interface {
+	Context() context.Context
 	Blockservice() blockservice.BlockService
-
 	GetFile(ctx context.Context, root cid.Cid) (io.ReadCloser, error)
 	PutFile(f fs.File) (PutResult, error)
 }
 
-type merkleDagStore struct {
+func NodeStore(n base.Node) (Store, error) {
+	st, err := n.Stat()
+	if err != nil {
+		return nil, err
+	}
+	store, ok := st.Sys().(Store)
+	if !ok {
+		return nil, fmt.Errorf("node Sys is not a Store")
+	}
+	return store, nil
+}
+
+type store struct {
 	ctx     context.Context
 	bserv   blockservice.BlockService
 	dagserv format.DAGService
 }
 
-var _ MerkleDagStore = (*merkleDagStore)(nil)
+var _ Store = (*store)(nil)
 
-func NewMerkleDagStore(ctx context.Context, bserv blockservice.BlockService) (MerkleDagStore, error) {
+func NewStore(ctx context.Context, bserv blockservice.BlockService) (Store, error) {
 	if bserv == nil {
 		return nil, fmt.Errorf("blockservice cannot be nil")
 	}
 
-	return &merkleDagStore{
+	return &store{
 		ctx:     ctx,
 		bserv:   bserv,
 		dagserv: merkledag.NewDAGService(bserv),
 	}, nil
 }
 
-func (mds *merkleDagStore) Blockservice() blockservice.BlockService { return mds.bserv }
+func (mds *store) Context() context.Context                { return mds.ctx }
+func (mds *store) Blockservice() blockservice.BlockService { return mds.bserv }
 
-func (mds *merkleDagStore) PutFile(f fs.File) (PutResult, error) {
+func (mds *store) PutFile(f fs.File) (PutResult, error) {
 	// dserv := format.NewBufferedDAG(mds.ctx, mds.dagserv)
 	prefix, err := merkledag.PrefixForCidVersion(1)
 	if err != nil {
@@ -98,7 +107,7 @@ func (mds *merkleDagStore) PutFile(f fs.File) (PutResult, error) {
 	}, nil
 }
 
-func (mds *merkleDagStore) GetFile(ctx context.Context, root cid.Cid) (io.ReadCloser, error) {
+func (mds *store) GetFile(ctx context.Context, root cid.Cid) (io.ReadCloser, error) {
 	ses := merkledag.NewSession(ctx, mds.dagserv)
 
 	nd, err := ses.Get(ctx, root)
@@ -110,7 +119,7 @@ func (mds *merkleDagStore) GetFile(ctx context.Context, root cid.Cid) (io.ReadCl
 }
 
 // Copy blocks from src to dst
-func CopyBlocks(ctx context.Context, id cid.Cid, src, dst MerkleDagStore) error {
+func CopyBlocks(ctx context.Context, id cid.Cid, src, dst Store) error {
 	blk, err := src.Blockservice().GetBlock(ctx, id)
 	if err != nil {
 		return err
@@ -146,127 +155,36 @@ func AllKeys(ctx context.Context, bs blockstore.Blockstore) ([]cid.Cid, error) {
 	return ids, nil
 }
 
-type Links struct {
-	l map[string]Link
-}
-
-func NewLinks(links ...Link) Links {
-	lks := Links{
-		l: map[string]Link{},
-	}
-
-	for _, link := range links {
-		lks.Add(link)
-	}
-
-	return lks
-}
-
-func DecodeLinksBlock(blk blocks.Block) (Links, error) {
-	lks := Links{l: map[string]Link{}}
-	n, err := cbornode.DecodeBlock(blk)
-	if err != nil {
-		return lks, err
-	}
-	for _, l := range n.Links() {
-		lks.l[l.Name] = Link{
-			Name: l.Name,
-			Cid:  l.Cid,
-			Size: int64(l.Size),
-		}
-	}
-	return lks, nil
-}
-
-func (ls Links) Len() int {
-	return len(ls.l)
-}
-
-func (ls Links) Add(link Link) {
-	ls.l[link.Name] = link
-}
-
-func (ls Links) Remove(name string) bool {
-	_, existed := ls.l[name]
-	delete(ls.l, name)
-	return existed
-}
-
-func (ls Links) Get(name string) *Link {
-	lk, ok := ls.l[name]
-	if !ok {
-		return nil
-	}
-
-	return &lk
-}
-
-func (ls Links) Slice() []Link {
-	links := make([]Link, 0, len(ls.l))
-	for _, link := range ls.l {
-		links = append(links, link)
-	}
-	return links
-}
-
-func (ls Links) SortedSlice() []Link {
-	names := make([]string, 0, len(ls.l))
-	for name := range ls.l {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	links := make([]Link, 0, len(ls.l))
-	for _, name := range names {
-		links = append(links, ls.l[name])
-	}
-	return links
-}
-
-func (ls Links) Map() map[string]Link {
-	return ls.l
-}
-
-func (ls Links) EncodeBlock() (blocks.Block, error) {
-	links := map[string]cid.Cid{}
-	for k, l := range ls.l {
-		links[k] = l.Cid
-	}
-	return cbornode.WrapObject(links, multihash.SHA2_256, -1)
-}
-
-type Link struct {
-	Name string
-	Size int64
-	Cid  cid.Cid
-
-	IsFile bool
-	Mtime  int64
-}
-
-func (l Link) IsEmpty() bool {
-	return l.Cid.String() == ""
-}
-
-func (l Link) IPLD() *format.Link {
-	return &format.Link{
-		Name: l.Name,
-		Cid:  l.Cid,
-		Size: uint64(l.Size),
-	}
-}
-
 type PutResult struct {
-	Cid  cid.Cid
-	Size int64
+	Cid      cid.Cid
+	Size     int64
+	Type     base.NodeType
+	Userland cid.Cid
+	Metadata cid.Cid
+	Skeleton Skeleton
 }
 
-func (pr *PutResult) ToLink(name string, isFile bool) Link {
-	return Link{
-		Name:   name,
-		IsFile: isFile,
+var _ base.PutResult = (*PutResult)(nil)
 
-		Cid:  pr.Cid,
-		Size: pr.Size,
+func (r PutResult) CID() cid.Cid {
+	return r.Cid
+}
+
+func (r PutResult) ToLink(name string) base.Link {
+	return base.Link{
+		Name:   name,
+		Cid:    r.Cid,
+		Size:   r.Size,
+		IsFile: (r.Type == base.NTFile || r.Type == base.NTDataFile),
+	}
+}
+
+func (r PutResult) ToSkeletonInfo() SkeletonInfo {
+	return SkeletonInfo{
+		Cid:         r.Cid,
+		Metadata:    r.Metadata,
+		Userland:    r.Userland,
+		SubSkeleton: r.Skeleton,
+		IsFile:      (r.Type == base.NTFile || r.Type == base.NTDataFile),
 	}
 }

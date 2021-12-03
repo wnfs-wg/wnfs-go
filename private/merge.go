@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	base "github.com/qri-io/wnfs-go/base"
-	"github.com/qri-io/wnfs-go/mdstore"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
@@ -323,7 +322,7 @@ func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tre
 		}
 
 		l := PrivateLink{
-			Link: mdstore.Link{
+			Link: base.Link{
 				Name:   res.Name,
 				Size:   res.Size,
 				Cid:    res.Cid,

@@ -21,7 +21,6 @@ import (
 	golog "github.com/ipfs/go-log"
 	multihash "github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	public "github.com/qri-io/wnfs-go/public"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
@@ -989,7 +988,7 @@ func NewINumber() INumber {
 func (n INumber) Encode() string { return base64.URLEncoding.EncodeToString(n[:]) }
 
 type PrivateLink struct {
-	mdstore.Link
+	base.Link
 	Key     Key
 	Pointer Name
 }
@@ -1414,7 +1413,7 @@ func decodeDataFileBlock(df *DataFile, blk blocks.Block, key Key) (*DataFile, er
 }
 
 func (df *DataFile) IsBare() bool                   { return false }
-func (df *DataFile) Links() mdstore.Links           { return mdstore.NewLinks() } // TODO(b5): remove Links method?
+func (df *DataFile) Links() base.Links              { return base.NewLinks() } // TODO(b5): remove Links method?
 func (df *DataFile) Name() string                   { return df.name }
 func (df *DataFile) Size() int64                    { return df.header.Info.Size }
 func (df *DataFile) ModTime() time.Time             { return time.Unix(df.header.Info.Mtime, 0) }

@@ -1,4 +1,4 @@
-package base
+package public
 
 import (
 	"io/ioutil"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ipfs/go-cid"
+	base "github.com/qri-io/wnfs-go/base"
 )
 
 func TestSkeletonCBOR(t *testing.T) {
@@ -30,7 +31,7 @@ func TestSkeletonCBOR(t *testing.T) {
 	}
 
 	got := Skeleton{}
-	if err := DecodeCBOR(data, &got); err != nil {
+	if err := base.DecodeCBOR(data, &got); err != nil {
 		t.Fatal(err)
 	}
 

@@ -17,7 +17,8 @@ import (
 	base "github.com/qri-io/wnfs-go/base"
 	cipherchunker "github.com/qri-io/wnfs-go/cipherchunker"
 	cipherfile "github.com/qri-io/wnfs-go/cipherfile"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
+	"github.com/qri-io/wnfs-go/private"
+	"github.com/qri-io/wnfs-go/public"
 )
 
 func newAESGCMCipher(key []byte) (cipher.AEAD, error) {
@@ -48,20 +49,22 @@ func (fs *Filestore) GetEncryptedFile(ctx context.Context, root cid.Cid, key []b
 	return cf.(io.ReadCloser), nil
 }
 
-func (fs *Filestore) PutEncryptedFile(f fs.File, key []byte) (mdstore.PutResult, error) {
+func (fs *Filestore) PutEncryptedFile(f fs.File, key []byte) (private.PutResult, error) {
 	auth, err := newAESGCMCipher(key)
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return private.PutResult{}, err
 	}
 
 	node, err := fs.putEncryptedFile(f, auth)
 	if err != nil {
-		return mdstore.PutResult{}, err
+		return private.PutResult{}, err
 	}
 
-	return mdstore.PutResult{
-		Cid:  node.Cid(),
-		Size: 1,
+	return private.PutResult{
+		PutResult: public.PutResult{
+			Cid:  node.Cid(),
+			Size: 1,
+		},
 	}, nil
 }
 
