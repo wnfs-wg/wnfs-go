@@ -7,15 +7,17 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
-	"github.com/ipfs/go-cid"
+	cid "github.com/ipfs/go-cid"
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
-	"github.com/qri-io/wnfs-go/base"
+	base "github.com/qri-io/wnfs-go/base"
 	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
+	"github.com/qri-io/wnfs-go/gateway"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -271,6 +273,24 @@ size:	%d
 					defer repo.Close()
 					_, err = wnfs.Merge(cmdCtx, a, b)
 					return err
+				},
+			},
+			{
+				Name:  "gateway",
+				Usage: "",
+				Action: func(c *cli.Context) error {
+					s := &gateway.Server{
+						Factory: repo.Factory(),
+					}
+
+					port := c.Args().Get(0)
+					if port == "" {
+						port = ":8080"
+					} else if !strings.HasPrefix(port, ":") {
+						port = ":" + port
+					}
+
+					return s.Serve(port)
 				},
 			},
 

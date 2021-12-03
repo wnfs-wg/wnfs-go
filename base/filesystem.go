@@ -72,12 +72,6 @@ type SemVer string
 
 var ErrNoLink = fmt.Errorf("no link")
 
-// type MerkleDagFS interface {
-// 	fs.FS
-// 	Context() context.Context
-// 	DagStore() mdstore.MerkleDagStore
-// }
-
 type Node interface {
 	fs.File
 	fs.FileInfo

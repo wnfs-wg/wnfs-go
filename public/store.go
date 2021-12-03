@@ -51,16 +51,12 @@ type store struct {
 
 var _ Store = (*store)(nil)
 
-func NewStore(ctx context.Context, bserv blockservice.BlockService) (Store, error) {
-	if bserv == nil {
-		return nil, fmt.Errorf("blockservice cannot be nil")
-	}
-
+func NewStore(ctx context.Context, bserv blockservice.BlockService) Store {
 	return &store{
 		ctx:     ctx,
 		bserv:   bserv,
 		dagserv: merkledag.NewDAGService(bserv),
-	}, nil
+	}
 }
 
 func (mds *store) Context() context.Context                { return mds.ctx }

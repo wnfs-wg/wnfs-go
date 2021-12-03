@@ -1,7 +1,6 @@
 package wnfs
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -97,10 +96,7 @@ type fileSystem struct {
 var _ WNFS = (*fileSystem)(nil)
 
 func NewEmptyFS(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store, rootKey Key) (WNFS, error) {
-	store, err := public.NewStore(ctx, bserv)
-	if err != nil {
-		return nil, fmt.Errorf("creating store: %w", err)
-	}
+	store := public.NewStore(ctx, bserv)
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: store,
@@ -130,10 +126,7 @@ func NewEmptyFS(ctx context.Context, bserv blockservice.BlockService, rs ratchet
 
 func FromCID(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (WNFS, error) {
 	log.Debugw("FromCID", "cid", id, "key", rootKey.Encode(), "name", string(rootName))
-	store, err := public.NewStore(ctx, bserv)
-	if err != nil {
-		return nil, fmt.Errorf("creating store: %w", err)
-	}
+	store := public.NewStore(ctx, bserv)
 	fs := &fileSystem{
 		ctx:   ctx,
 		store: store,
@@ -796,7 +789,6 @@ type StructuredDataFile interface {
 type dataFile struct {
 	name    string
 	content interface{}
-	buf     *bytes.Buffer
 }
 
 var (
@@ -820,7 +812,7 @@ func (df *dataFile) Mode() fs.FileMode          { return base.ModeDefault }
 func (df *dataFile) Sys() interface{}           { return nil }
 
 func (df *dataFile) Read(p []byte) (int, error) {
-	return 0, fmt.Errorf("Not Implemented: dataFile.Read")
+	return 0, fmt.Errorf("not implemented: dataFile.Read")
 }
 func (df *dataFile) Close() error { return nil }
 func (df *dataFile) Data() (interface{}, error) {
@@ -834,4 +826,31 @@ func (df *dataFile) Data() (interface{}, error) {
 	res := map[string]interface{}{}
 	err = json.Unmarshal(data, &res)
 	return res, err
+}
+
+type Factory struct {
+	BlockService blockservice.BlockService
+	Ratchets     ratchet.Store
+	Decryption   private.DecryptionStore
+}
+
+func (fac Factory) Load(ctx context.Context, id cid.Cid) (fs WNFS, err error) {
+	var (
+		name private.Name
+		key  private.Key
+	)
+
+	if fac.Decryption != nil {
+		name, key, err = fac.Decryption.DecryptionFields(id)
+		if err != nil && !errors.Is(err, base.ErrNotFound) {
+			return nil, err
+		}
+		err = nil
+	}
+
+	return FromCID(ctx, fac.BlockService, fac.Ratchets, id, key, name)
+}
+
+func (fac Factory) LoadWithDecryption(ctx context.Context, id cid.Cid, name private.Name, key private.Key) (fs WNFS, err error) {
+	return FromCID(ctx, fac.BlockService, fac.Ratchets, id, key, name)
 }

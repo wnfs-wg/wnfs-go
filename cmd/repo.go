@@ -11,14 +11,16 @@ import (
 	cid "github.com/ipfs/go-cid"
 	wnfs "github.com/qri-io/wnfs-go"
 	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
-	"github.com/qri-io/wnfs-go/public"
+	private "github.com/qri-io/wnfs-go/private"
+	public "github.com/qri-io/wnfs-go/public"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
 const (
-	repoDirname      = ".wnfs"
-	stateFilename    = "wnfs-go.json"
-	ratchetsFilename = "ratchets.json"
+	repoDirname        = ".wnfs"
+	stateFilename      = "wnfs-go.json"
+	ratchetsFilename   = "ratchets.json"
+	decryptionFilename = "decryption.json"
 )
 
 func RepoPath() (string, error) {
@@ -37,6 +39,7 @@ type Repo struct {
 	path  string
 	fs    wnfs.WNFS
 	rs    ratchet.Store
+	dec   private.WritableDecryptionStore
 	store public.Store
 	state *State
 }
@@ -84,6 +87,11 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 		return nil, err
 	}
 
+	dec, err := private.NewDecryptionStore(filepath.Join(path, decryptionFilename))
+	if err != nil {
+		return nil, err
+	}
+
 	var fs wnfs.WNFS
 	if state.RootCID.Equals(cid.Cid{}) {
 		fmt.Printf("creating new wnfs filesystem...")
@@ -102,6 +110,7 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 		store: store,
 		fs:    fs,
 		rs:    rs,
+		dec:   dec,
 		state: state,
 	}, nil
 }
@@ -109,6 +118,14 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 func (r *Repo) Store() public.Store         { return r.store }
 func (r *Repo) RatchetStore() ratchet.Store { return r.rs }
 func (r *Repo) WNFS() wnfs.WNFS             { return r.fs }
+func (r *Repo) Factory() wnfs.Factory {
+	return wnfs.Factory{
+		BlockService: r.store.Blockservice(),
+		Ratchets:     r.rs,
+		Decryption:   r.dec,
+	}
+}
+
 func (r *Repo) Close() error {
 	r.state.RootCID = r.fs.Cid()
 	r.state.RootKey = r.fs.RootKey()
@@ -116,6 +133,9 @@ func (r *Repo) Close() error {
 	r.state.PrivateRootName, err = r.fs.PrivateName()
 	if err != nil {
 		return fmt.Errorf("reading private name: %w", err)
+	}
+	if err = r.dec.PutDecryptionFields(r.state.RootCID, r.state.PrivateRootName, r.state.RootKey); err != nil {
+		return fmt.Errorf("updating decryption store: %w", err)
 	}
 	fmt.Printf("writing root cid: %s ...", r.state.RootCID)
 	if err := r.state.Write(); err != nil {
