@@ -13,9 +13,9 @@ import (
 	cmp "github.com/google/go-cmp/cmp"
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
-	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
+	mockblocks "github.com/qri-io/wnfs-go/mockblocks"
 	"github.com/qri-io/wnfs-go/private"
+	"github.com/qri-io/wnfs-go/public"
 	"github.com/qri-io/wnfs-go/ratchet"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +41,7 @@ func TestPublicWNFS(t *testing.T) {
 		store := newMemTestStore(ctx, t)
 		rs := ratchet.NewMemStore(ctx)
 
-		fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+		fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,7 +124,7 @@ func TestMerge(t *testing.T) {
 	store := newMemTestStore(ctx, t)
 	rs := ratchet.NewMemStore(ctx)
 
-	a, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	a, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestMerge(t *testing.T) {
 	pn, err := a.PrivateName()
 	require.Nil(t, err)
 
-	b, err := FromCID(ctx, store, rs, a.Cid(), a.RootKey(), pn)
+	b, err := FromCID(ctx, store.Blockservice(), rs, a.Cid(), a.RootKey(), pn)
 	require.Nil(t, err)
 
 	pathStr = "public/foo/world.txt"
@@ -166,7 +166,7 @@ func BenchmarkPublicCat10MbFile(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func BenchmarkPublicWrite10MbFile(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestWNFSPrivate(t *testing.T) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestWNFSPrivate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fsys, err = FromCID(ctx2, store, rs, rootCid, key, pn)
+	fsys, err = FromCID(ctx2, store.Blockservice(), rs, rootCid, key, pn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func BenchmarkPrivateCat10MbFile(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func BenchmarkPrivateWrite10MbFile(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func BenchmarkPrivateCat10MbFileSubdir(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,7 +511,7 @@ func BenchmarkPrivateWrite10MbFileSubdir(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	rs := ratchet.NewMemStore(ctx)
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
-	fsys, err := NewEmptyFS(ctx, store, rs, testRootKey)
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,9 +580,9 @@ type fataler interface {
 	Fatal(args ...interface{})
 }
 
-func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
+func newMemTestStore(ctx context.Context, f fataler) public.Store {
 	f.Helper()
-	store, err := mdstore.NewMerkleDagStore(ctx, mdstoremock.NewOfflineMemBlockservice())
+	store, err := public.NewStore(ctx, mockblocks.NewOfflineMemBlockservice())
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -592,21 +592,21 @@ func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
 func newMemTestPrivateStore(ctx context.Context, f fataler) private.Store {
 	f.Helper()
 	rs := ratchet.NewMemStore(ctx)
-	store, err := private.NewStore(ctx, mdstoremock.NewOfflineMemBlockservice(), rs)
+	store, err := private.NewStore(ctx, mockblocks.NewOfflineMemBlockservice(), rs)
 	if err != nil {
 		f.Fatal(err)
 	}
 	return store
 }
 
-func newFileTestStore(ctx context.Context, f fataler) (st mdstore.MerkleDagStore, cleanup func()) {
+func newFileTestStore(ctx context.Context, f fataler) (st public.Store, cleanup func()) {
 	f.Helper()
-	bserv, cleanup, err := mdstoremock.NewOfflineFileBlockservice(f.Name())
+	bserv, cleanup, err := mockblocks.NewOfflineFileBlockservice(f.Name())
 	if err != nil {
 		f.Fatal(err)
 	}
 
-	store, err := mdstore.NewMerkleDagStore(ctx, bserv)
+	store, err := public.NewStore(ctx, bserv)
 	if err != nil {
 		f.Fatal(err)
 	}

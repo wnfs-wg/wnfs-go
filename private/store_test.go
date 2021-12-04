@@ -11,8 +11,7 @@ import (
 	cid "github.com/ipfs/go-cid"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	base "github.com/qri-io/wnfs-go/base"
-	"github.com/qri-io/wnfs-go/mdstore"
-	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
+	mockblocks "github.com/qri-io/wnfs-go/mockblocks"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -43,7 +42,7 @@ func TestCopyBlocks(t *testing.T) {
 
 func newMemTestPrivateStore(ctx context.Context, f fataler) Store {
 	f.Helper()
-	store, err := NewStore(ctx, mdstoremock.NewOfflineMemBlockservice(), ratchet.NewMemStore(ctx))
+	store, err := NewStore(ctx, mockblocks.NewOfflineMemBlockservice(), ratchet.NewMemStore(ctx))
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -52,7 +51,7 @@ func newMemTestPrivateStore(ctx context.Context, f fataler) Store {
 
 func copyStore(ctx context.Context, a Store, t *testing.T) Store {
 	t.Helper()
-	store, err := NewStore(ctx, mdstoremock.NewOfflineMemBlockservice(), ratchet.NewMemStore(ctx))
+	store, err := NewStore(ctx, mockblocks.NewOfflineMemBlockservice(), ratchet.NewMemStore(ctx))
 	require.Nil(t, err)
 
 	err = store.HAMT().Merge(ctx, a.HAMT().root)
@@ -83,10 +82,10 @@ func copyStore(ctx context.Context, a Store, t *testing.T) Store {
 
 func equalBlockstores(t *testing.T, a, b blockstore.Blockstore) {
 	ctx := context.Background()
-	aKeys, err := mdstore.AllKeys(ctx, a)
+	aKeys, err := base.AllKeys(ctx, a)
 	require.Nil(t, err)
 
-	bKeys, err := mdstore.AllKeys(ctx, b)
+	bKeys, err := base.AllKeys(ctx, b)
 	require.Nil(t, err)
 
 	astrs := cidsToStrings(aKeys)

@@ -1,4 +1,4 @@
-package mock
+package mockblocks
 
 import (
 	"context"
@@ -114,7 +114,7 @@ func (mb *memBlockstore) totalBlockSizes() int {
 
 func NewFileBlockstore(prefix string) (bs blockstore.Blockstore, cleanup func(), err error) {
 	if prefix == "" {
-		prefix = "mdstore-file-blockstore"
+		prefix = "mockblocks-file-blockstore"
 	}
 	tdir, err := ioutil.TempDir("", prefix)
 	if err != nil {

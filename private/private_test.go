@@ -14,8 +14,6 @@ import (
 	golog "github.com/ipfs/go-log"
 	"github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
-	mdstoremock "github.com/qri-io/wnfs-go/mdstore/mock"
 	"github.com/qri-io/wnfs-go/ratchet"
 	"github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
@@ -127,7 +125,7 @@ func TestPrivateLinkBlockCoding(t *testing.T) {
 	fooCid := cid.NewCidV1(cid.DagCBOR, hash)
 
 	links := PrivateLinks{
-		"foo": PrivateLink{Link: mdstore.Link{Name: "foo", Cid: fooCid, Size: 5, Mtime: 20}, Key: testRootKey, Pointer: Name("apples")},
+		"foo": PrivateLink{Link: base.Link{Name: "foo", Cid: fooCid, Size: 5, Mtime: 20}, Key: testRootKey, Pointer: Name("apples")},
 	}
 
 	blk, err := links.marshalEncryptedBlock(testRootKey)
@@ -178,15 +176,6 @@ type fataler interface {
 	Name() string
 	Helper()
 	Fatal(args ...interface{})
-}
-
-func newMemTestStore(ctx context.Context, f fataler) mdstore.MerkleDagStore {
-	f.Helper()
-	store, err := mdstore.NewMerkleDagStore(ctx, mdstoremock.NewOfflineMemBlockservice())
-	if err != nil {
-		f.Fatal(err)
-	}
-	return store
 }
 
 func mustHistCids(t *testing.T, tree *Tree, path base.Path) []cid.Cid {

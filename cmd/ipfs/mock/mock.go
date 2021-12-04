@@ -18,8 +18,6 @@ import (
 	peer "github.com/libp2p/go-libp2p-core/peer"
 	pstore "github.com/libp2p/go-libp2p-peerstore"
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
-	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
-	"github.com/qri-io/wnfs-go/mdstore"
 )
 
 const testPeerID = "QmTFauExutTsy4XP6JbMFcw2Wa9645HJt2bTqL6qYDCKfe"
@@ -120,13 +118,4 @@ func MakeAPI(ctx context.Context) (*core.IpfsNode, coreiface.CoreAPI, error) {
 	}
 
 	return nd[0], api[0], nil
-}
-
-func MockMerkleDagStore(ctx context.Context) (mdstore.MerkleDagStore, error) {
-	nd, _, err := MakeAPISwarm(ctx, false, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	return wnipfs.NewFilesystemFromNode(ctx, nd[0])
 }

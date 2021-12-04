@@ -6,18 +6,17 @@ import (
 	"time"
 
 	base "github.com/qri-io/wnfs-go/base"
-	"github.com/qri-io/wnfs-go/mdstore"
 )
 
 func Merge(ctx context.Context, a, b base.Node) (result base.MergeResult, err error) {
-	dest, err := base.NodeFS(a)
+	dest, err := NodeStore(a)
 	if err != nil {
 		return result, err
 	}
 	return merge(ctx, dest, a, b)
 }
 
-func merge(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (result base.MergeResult, err error) {
+func merge(ctx context.Context, destStore Store, a, b base.Node) (result base.MergeResult, err error) {
 	var (
 		aCur, bCur   = a, b
 		aHist, bHist = a.AsHistoryEntry(), b.AsHistoryEntry()
@@ -40,11 +39,11 @@ func merge(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (result
 		}, nil
 	}
 
-	afs, err := base.NodeFS(a)
+	afs, err := NodeStore(a)
 	if err != nil {
 		return result, err
 	}
-	bfs, err := base.NodeFS(b)
+	bfs, err := NodeStore(b)
 	if err != nil {
 		return result, err
 	}
@@ -78,7 +77,7 @@ func merge(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (result
 					}, nil
 				} else {
 					// both local & remote are greater than zero, have diverged
-					merged, err := mergeNodes(ctx, destFS, a, b, aGen, bGen)
+					merged, err := mergeNodes(ctx, destStore, a, b, aGen, bGen)
 					if err != nil {
 						return result, err
 					}
@@ -125,7 +124,7 @@ func merge(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (result
 	}
 
 	// no common history, merge based on heigh & alpha-sorted-cid
-	merged, err := mergeNodes(ctx, destFS, a, b, aGen, bGen)
+	merged, err := mergeNodes(ctx, destStore, a, b, aGen, bGen)
 	if err != nil {
 		return result, err
 	}
@@ -150,23 +149,23 @@ func merge(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (result
 // 	* if both are directories, merge recursively
 // 	* in all other cases, replace prior contents with winning CID
 // always writes to a's filesystem
-func mergeNodes(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node, aGen, bGen int) (merged base.Node, err error) {
-	log.Debugw("merge nodes", "aName", a.Name(), "bName", b.Name(), "destFS", fmt.Sprintf("%#v", destFS))
+func mergeNodes(ctx context.Context, destStore Store, a, b base.Node, aGen, bGen int) (merged base.Node, err error) {
+	log.Debugw("merge nodes", "aName", a.Name(), "bName", b.Name(), "destStore", fmt.Sprintf("%#v", destStore))
 	// if b is preferred over a, switch values
 	if aGen < bGen || (aGen == bGen && base.LessCID(b.Cid(), a.Cid())) {
 		a, b = b, a
 	}
 
-	aTree, aIsTree := a.(*PublicTree)
-	bTree, bIsTree := b.(*PublicTree)
+	aTree, aIsTree := a.(*Tree)
+	bTree, bIsTree := b.(*Tree)
 	if aIsTree && bIsTree {
-		return mergeTrees(ctx, destFS, aTree, bTree)
+		return mergeTrees(ctx, destStore, aTree, bTree)
 	}
 
-	return mergeNode(ctx, destFS, a, b)
+	return mergeNode(ctx, destStore, a, b)
 }
 
-func mergeTrees(ctx context.Context, destFS base.MerkleDagFS, a, b *PublicTree) (*PublicTree, error) {
+func mergeTrees(ctx context.Context, destStore Store, a, b *Tree) (*Tree, error) {
 	log.Debugw("mergeTrees", "a_skeleton", a.skeleton)
 	checked := map[string]struct{}{}
 
@@ -176,18 +175,18 @@ func mergeTrees(ctx context.Context, destFS base.MerkleDagFS, a, b *PublicTree) 
 
 		if !existsLocally {
 			// remote has a file local is missing, add it.
-			n, err := loadNodeFromSkeletonInfo(ctx, b.fs, remName, remInfo)
+			n, err := loadNodeFromSkeletonInfo(ctx, b.store, remName, remInfo)
 			if err != nil {
 				return nil, err
 			}
 			log.Debugw("mergeTrees add file", "dir", a.Name(), "file", remName, "cid", n.Cid())
 
-			if err := mdstore.CopyBlocks(destFS.Context(), n.Cid(), b.fs.DagStore(), destFS.DagStore()); err != nil {
+			if err := base.CopyBlocks(destStore.Context(), n.Cid(), b.store.Blockservice(), destStore.Blockservice()); err != nil {
 				return nil, err
 			}
 
 			a.skeleton[remName] = remInfo
-			a.userland.Add(mdstore.Link{
+			a.userland.Add(base.Link{
 				Name:   n.Name(),
 				Size:   n.Size(),
 				Cid:    n.Cid(),
@@ -205,29 +204,29 @@ func mergeTrees(ctx context.Context, destFS base.MerkleDagFS, a, b *PublicTree) 
 		}
 
 		// node exists in both trees & CIDs are inequal. merge recursively
-		lcl, err := loadNodeFromSkeletonInfo(ctx, a.fs, remName, localInfo)
+		lcl, err := loadNodeFromSkeletonInfo(ctx, a.store, remName, localInfo)
 		if err != nil {
 			return nil, err
 		}
-		rem, err := loadNodeFromSkeletonInfo(ctx, b.fs, remName, remInfo)
+		rem, err := loadNodeFromSkeletonInfo(ctx, b.store, remName, remInfo)
 		if err != nil {
 			return nil, err
 		}
 
-		res, err := merge(ctx, destFS, lcl, rem)
+		res, err := merge(ctx, destStore, lcl, rem)
 		if err != nil {
 			return nil, err
 		}
-		a.skeleton[remName] = res.ToSkeletonInfo()
+		a.skeleton[remName] = mergeResultToSkeletonInfo(res)
 		a.userland.Add(res.ToLink(remName))
 		checked[remName] = struct{}{}
 	}
 
-	// iterate all of a's files making sure they're present on destFS
+	// iterate all of a's files making sure they're present on destStore
 	for aName, aInfo := range a.skeleton {
 		if _, ok := checked[aName]; !ok {
 			log.Debugw("copying blocks for a file", "name", aName, "cid", aInfo.Cid)
-			if err := mdstore.CopyBlocks(destFS.Context(), aInfo.Cid, a.fs.DagStore(), destFS.DagStore()); err != nil {
+			if err := base.CopyBlocks(destStore.Context(), aInfo.Cid, a.store.Blockservice(), destStore.Blockservice()); err != nil {
 				return nil, err
 			}
 		}
@@ -235,7 +234,7 @@ func mergeTrees(ctx context.Context, destFS base.MerkleDagFS, a, b *PublicTree) 
 
 	a.h.Merge = &b.cid
 	a.h.Info.Mtime = base.Timestamp().Unix()
-	a.fs = destFS
+	a.store = destStore
 	if _, err := a.Put(); err != nil {
 		return nil, err
 	}
@@ -244,15 +243,15 @@ func mergeTrees(ctx context.Context, destFS base.MerkleDagFS, a, b *PublicTree) 
 
 // construct a new node from a, with merge field set to b.Cid, store new node on
 // dest
-func mergeNode(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (merged base.Node, err error) {
+func mergeNode(ctx context.Context, destStore Store, a, b base.Node) (merged base.Node, err error) {
 	bid := b.Cid()
 
 	switch a := a.(type) {
-	case *PublicTree:
-		tree := &PublicTree{
-			fs:   destFS,
-			name: a.name,
-			cid:  a.cid,
+	case *Tree:
+		tree := &Tree{
+			store: destStore,
+			name:  a.name,
+			cid:   a.cid,
 			h: &Header{
 				Info:     a.h.Info,
 				Merge:    &bid,
@@ -270,15 +269,15 @@ func mergeNode(ctx context.Context, destFS base.MerkleDagFS, a, b base.Node) (me
 		_, err := a.Put()
 		return tree, err
 
-	case *PublicFile:
+	case *File:
 		if err = a.ensureContent(); err != nil {
 			return nil, err
 		}
 
-		return &PublicFile{
-			fs:   destFS,
-			name: a.Name(),
-			cid:  a.cid,
+		return &File{
+			store: destStore,
+			name:  a.Name(),
+			cid:   a.cid,
 			h: &Header{
 				Info:     a.h.Info,
 				Merge:    &bid,

@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	base "github.com/qri-io/wnfs-go/base"
-	"github.com/qri-io/wnfs-go/mdstore"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
@@ -224,10 +223,6 @@ func mergeDivergedNodes(ctx context.Context, destFS Store, a, b privateNode, rat
 		return nil, err
 	}
 
-	// if err = CopyBlocks(ctx, remInfo.Cid, bStore, destFS); err != nil {
-	// 	return nil, err
-	// }
-
 	if err := destFS.HAMT().Merge(ctx, bStore.HAMT().Root()); err != nil {
 		return nil, err
 	}
@@ -296,9 +291,6 @@ func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tre
 			// remote has a file local is missing. Add it.
 			log.Debugw("adding missing remote file", "name", remName, "cid", remInfo.Cid)
 			a.links.Add(remInfo)
-			// if err = CopyBlocks(ctx, remInfo.Cid, b.fs, destfs); err != nil {
-			// 	return nil, err
-			// }
 			checked[remName] = struct{}{}
 			continue
 		}
@@ -330,7 +322,7 @@ func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tre
 		}
 
 		l := PrivateLink{
-			Link: mdstore.Link{
+			Link: base.Link{
 				Name:   res.Name,
 				Size:   res.Size,
 				Cid:    res.Cid,

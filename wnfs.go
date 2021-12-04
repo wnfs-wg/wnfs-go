@@ -1,7 +1,6 @@
 package wnfs
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +15,6 @@ import (
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
 	private "github.com/qri-io/wnfs-go/private"
 	public "github.com/qri-io/wnfs-go/public"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
@@ -90,23 +88,21 @@ func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
 }
 
 type fileSystem struct {
-	store mdstore.MerkleDagStore
+	store public.Store
 	ctx   context.Context
 	root  *rootTree
 }
 
-var (
-	_ WNFS             = (*fileSystem)(nil)
-	_ base.MerkleDagFS = (*fileSystem)(nil)
-)
+var _ WNFS = (*fileSystem)(nil)
 
-func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet.Store, rootKey Key) (WNFS, error) {
+func NewEmptyFS(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store, rootKey Key) (WNFS, error) {
+	store := public.NewStore(ctx, bserv)
 	fs := &fileSystem{
 		ctx:   ctx,
-		store: dagStore,
+		store: store,
 	}
 
-	root, err := newEmptyRootTree(fs, rs, rootKey)
+	root, err := newEmptyRootTree(store, rs, rootKey)
 	if err != nil {
 		return nil, err
 	}
@@ -128,14 +124,15 @@ func NewEmptyFS(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet
 	return fs, nil
 }
 
-func FromCID(ctx context.Context, dagStore mdstore.MerkleDagStore, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (WNFS, error) {
+func FromCID(ctx context.Context, bserv blockservice.BlockService, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (WNFS, error) {
 	log.Debugw("FromCID", "cid", id, "key", rootKey.Encode(), "name", string(rootName))
+	store := public.NewStore(ctx, bserv)
 	fs := &fileSystem{
 		ctx:   ctx,
-		store: dagStore,
+		store: store,
 	}
 
-	root, err := loadRoot(ctx, fs, rs, id, rootKey, rootName)
+	root, err := loadRoot(ctx, store, rs, id, rootKey, rootName)
 	if err != nil {
 		return nil, fmt.Errorf("opening root tree %s:\n%w", id, err)
 	}
@@ -148,7 +145,7 @@ func (fsys *fileSystem) Context() context.Context { return fsys.ctx }
 func (fsys *fileSystem) Name() string             { return fsys.root.Name() }
 func (fsys *fileSystem) Cid() cid.Cid             { return fsys.root.Cid() }
 func (fsys *fileSystem) Size() int64              { return fsys.root.Size() }
-func (fsys *fileSystem) Links() mdstore.Links     { return fsys.root.Links() }
+func (fsys *fileSystem) Links() base.Links        { return fsys.root.Links() }
 
 func (fsys *fileSystem) Stat() (fs.FileInfo, error) {
 	return fsys.root.Stat()
@@ -173,10 +170,6 @@ func (fsys *fileSystem) PrivateName() (PrivateName, error) {
 		return "", err
 	}
 	return pn, nil
-}
-
-func (fsys *fileSystem) DagStore() mdstore.MerkleDagStore {
-	return fsys.store
 }
 
 func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
@@ -422,7 +415,7 @@ func decodeRootHeader(blk blocks.Block) (*rootHeader, error) {
 }
 
 type rootTree struct {
-	fs      base.MerkleDagFS
+	store   public.Store
 	pstore  private.Store
 	id      cid.Cid
 	rootKey Key
@@ -430,30 +423,31 @@ type rootTree struct {
 	h *rootHeader
 
 	// Pretty   *base.BareTree
-	Public  *public.PublicTree
-	Private *private.Root
+	metadata *public.DataFile
+	Public   *public.Tree
+	Private  *private.Root
 }
 
 var _ base.Tree = (*rootTree)(nil)
 
-func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (root *rootTree, err error) {
+func newEmptyRootTree(store public.Store, rs ratchet.Store, rootKey Key) (root *rootTree, err error) {
 	root = &rootTree{
-		fs:      fs,
+		store:   store,
 		rootKey: rootKey,
 
 		h: &rootHeader{
 			Info: public.NewInfo(base.NTDir),
 		},
-		Public: public.NewEmptyTree(fs, FileHierarchyNamePublic),
+		Public: public.NewEmptyTree(store, FileHierarchyNamePublic),
 		// Pretty: &base.BareTree{},
 	}
 
-	root.pstore, err = private.NewStore(context.TODO(), fs.DagStore().Blockservice(), rs)
+	root.pstore, err = private.NewStore(context.TODO(), store.Blockservice(), rs)
 	if err != nil {
 		return nil, err
 	}
 
-	privateRoot, err := private.NewEmptyRoot(fs.Context(), root.pstore, FileHierarchyNamePrivate, rootKey)
+	privateRoot, err := private.NewEmptyRoot(store.Context(), root.pstore, FileHierarchyNamePrivate, rootKey)
 	if err != nil {
 		return nil, err
 	}
@@ -461,10 +455,10 @@ func newEmptyRootTree(fs base.MerkleDagFS, rs ratchet.Store, rootKey Key) (root 
 	return root, nil
 }
 
-func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (r *rootTree, err error) {
-	r = &rootTree{fs: fs, id: id, rootKey: rootKey}
+func loadRoot(ctx context.Context, store public.Store, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (r *rootTree, err error) {
+	r = &rootTree{store: store, id: id, rootKey: rootKey}
 
-	blk, err := fs.DagStore().Blockservice().GetBlock(ctx, id)
+	blk, err := store.Blockservice().GetBlock(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("loading root header block: %w", err)
 	}
@@ -474,25 +468,25 @@ func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid
 	}
 
 	if r.h.Public != nil {
-		if r.Public, err = public.LoadTree(ctx, fs, FileHierarchyNamePublic, *r.h.Public); err != nil {
+		if r.Public, err = public.LoadTree(ctx, store, FileHierarchyNamePublic, *r.h.Public); err != nil {
 			return nil, fmt.Errorf("opening /%s tree %s:\n%w", FileHierarchyNamePublic, r.h.Public, err)
 		}
 	} else {
-		r.Public = public.NewEmptyTree(fs, FileHierarchyNamePublic)
+		r.Public = public.NewEmptyTree(store, FileHierarchyNamePublic)
 	}
 
 	if r.h.Private != nil && !rootKey.IsEmpty() {
-		if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, *r.h.Private); err != nil {
+		if r.pstore, err = private.LoadStore(ctx, store.Blockservice(), rs, *r.h.Private); err != nil {
 			return nil, err
 		}
-		if r.Private, err = private.LoadRoot(fs.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName); err != nil {
+		if r.Private, err = private.LoadRoot(store.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName); err != nil {
 			return nil, fmt.Errorf("opening private root:\n%w", err)
 		}
 	} else {
-		if r.pstore, err = private.LoadStore(ctx, fs.DagStore().Blockservice(), rs, cid.Undef); err != nil {
+		if r.pstore, err = private.LoadStore(ctx, store.Blockservice(), rs, cid.Undef); err != nil {
 			return nil, err
 		}
-		if r.Private, err = private.LoadRoot(fs.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName); err != nil {
+		if r.Private, err = private.LoadRoot(store.Context(), r.pstore, FileHierarchyNamePrivate, rootKey, rootName); err != nil {
 			return nil, fmt.Errorf("opening private root:\n%w", err)
 		}
 	}
@@ -500,7 +494,7 @@ func loadRoot(ctx context.Context, fs base.MerkleDagFS, rs ratchet.Store, id cid
 	return r, nil
 }
 
-func (r *rootTree) Put() (result mdstore.PutResult, err error) {
+func (r *rootTree) Put() (result base.PutResult, err error) {
 	if r.id.Defined() {
 		r.h.Previous = &r.id
 	}
@@ -514,13 +508,21 @@ func (r *rootTree) Put() (result mdstore.PutResult, err error) {
 		r.h.Private = &id
 	}
 
-	// TODO(by): pretty, metadata links on header
+	if r.metadata != nil {
+		if _, err = r.metadata.Put(); err != nil {
+			return result, err
+		}
+		id := r.metadata.Cid()
+		r.h.Metadata = &id
+	}
+
+	// TODO(by): build pretty link
 
 	blk, err := r.h.encodeBlock()
 	if err != nil {
 		return result, fmt.Errorf("constructing root header block: %w", err)
 	}
-	if err = r.fs.DagStore().Blockservice().AddBlock(blk); err != nil {
+	if err = r.store.Blockservice().AddBlock(blk); err != nil {
 		return result, fmt.Errorf("storing root header block: %w", err)
 	}
 	r.id = blk.Cid()
@@ -535,17 +537,29 @@ func (r *rootTree) IsDir() bool         { return true }
 func (r *rootTree) Mode() fs.FileMode   { return fs.FileMode(r.h.Info.Mode) }
 func (r *rootTree) Type() base.NodeType { return r.h.Info.Type }
 func (r *rootTree) ModTime() time.Time  { return time.Unix(r.h.Info.Mtime, 0) }
-func (r *rootTree) Sys() interface{}    { return r.fs }
+func (r *rootTree) Sys() interface{}    { return r.store }
 
-func (r *rootTree) Links() mdstore.Links {
-	links := mdstore.NewLinks(
-		// mdstore.Link{Cid: r.Pretty, Size: r.Pretty.Size(), Name: FileHierarchyNamePretty},
-		mdstore.Link{Cid: r.Public.Cid(), Size: r.Public.Size(), Name: FileHierarchyNamePublic},
-		mdstore.Link{Cid: r.Private.Cid(), Size: r.Private.Size(), Name: FileHierarchyNamePrivate},
+func (r *rootTree) SetMeta(md map[string]interface{}) error {
+	r.metadata = public.NewDataFile(r.store, "", md)
+	return nil
+}
+
+func (r *rootTree) Meta() (f base.LinkedDataFile, err error) {
+	if r.metadata == nil && r.h.Metadata != nil {
+		r.metadata, err = public.LoadDataFile(r.store.Context(), r.store, base.MetadataLinkName, *r.h.Metadata)
+	}
+	return r.metadata, err
+}
+
+func (r *rootTree) Links() base.Links {
+	links := base.NewLinks(
+		// base.Link{Cid: r.Pretty, Size: r.Pretty.Size(), Name: FileHierarchyNamePretty},
+		base.Link{Cid: r.Public.Cid(), Size: r.Public.Size(), Name: FileHierarchyNamePublic},
+		base.Link{Cid: r.Private.Cid(), Size: r.Private.Size(), Name: FileHierarchyNamePrivate},
 	)
 
 	if r.h.Previous != nil && !r.id.Equals(cid.Undef) {
-		links.Add(mdstore.Link{Cid: *r.h.Previous, Name: PreviousLinkName})
+		links.Add(base.Link{Cid: *r.h.Previous, Name: PreviousLinkName})
 	}
 	return links
 }
@@ -558,12 +572,12 @@ func (r *rootTree) Get(path base.Path) (f fs.File, err error) {
 		return r, nil
 	case FileHierarchyNamePublic:
 		if r.Public == nil {
-			r.Public = public.NewEmptyTree(r.fs, FileHierarchyNamePublic)
+			r.Public = public.NewEmptyTree(r.store, FileHierarchyNamePublic)
 		}
 		return r.Public.Get(tail)
 	case FileHierarchyNamePrivate:
 		if r.Private == nil {
-			r.Private, err = private.NewEmptyRoot(r.fs.Context(), r.pstore, FileHierarchyNamePrivate, r.rootKey)
+			r.Private, err = private.NewEmptyRoot(r.store.Context(), r.pstore, FileHierarchyNamePrivate, r.rootKey)
 			if err != nil {
 				return nil, err
 			}
@@ -600,7 +614,7 @@ func (r *rootTree) Stat() (fi fs.FileInfo, err error) {
 		// TODO (b5):
 		// mtime: time.Unix(t.metadata.UnixMeta.Mtime, 0),
 		time.Unix(0, 0),
-		r.fs.DagStore(),
+		r.store,
 	), nil
 }
 
@@ -654,8 +668,8 @@ func (r *rootTree) History(context.Context, int) ([]base.HistoryEntry, error) {
 }
 
 func (r *rootTree) history(max int) (hist []base.HistoryEntry, err error) {
-	ctx := r.fs.Context()
-	store := r.fs.DagStore()
+	ctx := r.store.Context()
+	store := r.store
 
 	hist = []base.HistoryEntry{
 		r.AsHistoryEntry(),
@@ -730,7 +744,7 @@ func Merge(ctx context.Context, aFs, bFs WNFS) (result base.MergeResult, err err
 		}
 		log.Debugw("merged public", "result", res.Cid)
 		fmt.Printf("/public:\t%s\n", res.Type)
-		a.root.Public, err = public.LoadTree(ctx, a.root.fs, FileHierarchyNamePublic, res.Cid)
+		a.root.Public, err = public.LoadTree(ctx, a.root.store, FileHierarchyNamePublic, res.Cid)
 		if err != nil {
 			return base.MergeResult{}, err
 		}
@@ -746,7 +760,7 @@ func Merge(ctx context.Context, aFs, bFs WNFS) (result base.MergeResult, err err
 		if err := pk.Decode(res.Key); err != nil {
 			return result, err
 		}
-		a.root.Private, err = private.LoadRoot(a.root.fs.Context(), a.root.pstore, FileHierarchyNamePrivate, *pk, private.Name(res.PrivateName))
+		a.root.Private, err = private.LoadRoot(a.root.store.Context(), a.root.pstore, FileHierarchyNamePrivate, *pk, private.Name(res.PrivateName))
 		if err != nil {
 			return result, err
 		}
@@ -775,7 +789,6 @@ type StructuredDataFile interface {
 type dataFile struct {
 	name    string
 	content interface{}
-	buf     *bytes.Buffer
 }
 
 var (
@@ -799,7 +812,7 @@ func (df *dataFile) Mode() fs.FileMode          { return base.ModeDefault }
 func (df *dataFile) Sys() interface{}           { return nil }
 
 func (df *dataFile) Read(p []byte) (int, error) {
-	return 0, fmt.Errorf("Not Implemented: dataFile.Read")
+	return 0, fmt.Errorf("not implemented: dataFile.Read")
 }
 func (df *dataFile) Close() error { return nil }
 func (df *dataFile) Data() (interface{}, error) {
@@ -813,4 +826,31 @@ func (df *dataFile) Data() (interface{}, error) {
 	res := map[string]interface{}{}
 	err = json.Unmarshal(data, &res)
 	return res, err
+}
+
+type Factory struct {
+	BlockService blockservice.BlockService
+	Ratchets     ratchet.Store
+	Decryption   private.DecryptionStore
+}
+
+func (fac Factory) Load(ctx context.Context, id cid.Cid) (fs WNFS, err error) {
+	var (
+		name private.Name
+		key  private.Key
+	)
+
+	if fac.Decryption != nil {
+		name, key, err = fac.Decryption.DecryptionFields(id)
+		if err != nil && !errors.Is(err, base.ErrNotFound) {
+			return nil, err
+		}
+		err = nil
+	}
+
+	return FromCID(ctx, fac.BlockService, fac.Ratchets, id, key, name)
+}
+
+func (fac Factory) LoadWithDecryption(ctx context.Context, id cid.Cid, name private.Name, key private.Key) (fs WNFS, err error) {
+	return FromCID(ctx, fac.BlockService, fac.Ratchets, id, key, name)
 }

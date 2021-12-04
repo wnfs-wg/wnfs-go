@@ -7,15 +7,17 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
-	"github.com/ipfs/go-cid"
+	cid "github.com/ipfs/go-cid"
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
-	"github.com/qri-io/wnfs-go/base"
+	base "github.com/qri-io/wnfs-go/base"
 	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
+	"github.com/qri-io/wnfs-go/gateway"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -28,13 +30,6 @@ func init() {
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// var (
-	// 	fs         wnfs.WNFS
-	// 	store      mdstore.MerkleDagStore
-	// 	state      *Repo
-	// 	updateRepo func()
-	// )
 
 	var repo *Repo
 
@@ -241,7 +236,7 @@ size:	%d
 						return err
 					}
 
-					prev, err := wnfs.FromCID(cmdCtx, repo.DagStore(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
+					prev, err := wnfs.FromCID(cmdCtx, repo.Store().Blockservice(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
 					if err != nil {
 						errExit("error: opening previous WNFS %s:\n%s\n", entries[1].Cid, err.Error())
 					}
@@ -280,6 +275,24 @@ size:	%d
 					return err
 				},
 			},
+			{
+				Name:  "gateway",
+				Usage: "",
+				Action: func(c *cli.Context) error {
+					s := &gateway.Server{
+						Factory: repo.Factory(),
+					}
+
+					port := c.Args().Get(0)
+					if port == "" {
+						port = ":8080"
+					} else if !strings.HasPrefix(port, ":") {
+						port = ":" + port
+					}
+
+					return s.Serve(port)
+				},
+			},
 
 			// plumbing & diagnostic commands
 			{
@@ -291,7 +304,7 @@ size:	%d
 						Action: func(c *cli.Context) error {
 							cmdCtx, cancel := context.WithCancel(ctx)
 							defer cancel()
-							keys, err := repo.DagStore().Blockservice().Blockstore().AllKeysChan(cmdCtx)
+							keys, err := repo.Store().Blockservice().Blockstore().AllKeysChan(cmdCtx)
 							if err != nil {
 								return err
 							}
@@ -320,7 +333,7 @@ size:	%d
 								return err
 							}
 
-							blk, err := repo.DagStore().Blockservice().GetBlock(cmdCtx, id)
+							blk, err := repo.Store().Blockservice().GetBlock(cmdCtx, id)
 							if err != nil {
 								return err
 							}
@@ -354,7 +367,7 @@ size:	%d
 						return err
 					}
 
-					diag, err := wnfs.HAMTContents(cmdCtx, repo.DagStore().Blockservice(), id)
+					diag, err := wnfs.HAMTContents(cmdCtx, repo.Store().Blockservice(), id)
 					if err != nil {
 						return err
 					}

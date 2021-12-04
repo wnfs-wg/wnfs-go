@@ -2,13 +2,19 @@ package base
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"sort"
 
+	blocks "github.com/ipfs/go-block-format"
 	cid "github.com/ipfs/go-cid"
+	cbornode "github.com/ipfs/go-ipld-cbor"
+	format "github.com/ipfs/go-ipld-format"
 	multihash "github.com/multiformats/go-multihash"
-	mdstore "github.com/qri-io/wnfs-go/mdstore"
 )
+
+var ErrNotFound = errors.New("not found")
 
 const (
 	// LatestVersion is the most recent semantic version of WNFS this
@@ -66,12 +72,6 @@ type SemVer string
 
 var ErrNoLink = fmt.Errorf("no link")
 
-type MerkleDagFS interface {
-	fs.FS
-	Context() context.Context
-	DagStore() mdstore.MerkleDagStore
-}
-
 type Node interface {
 	fs.File
 	fs.FileInfo
@@ -79,10 +79,17 @@ type Node interface {
 	Type() NodeType
 	AsHistoryEntry() HistoryEntry
 	History(ctx context.Context, limit int) ([]HistoryEntry, error)
+	Meta() (LinkedDataFile, error)
 }
 
 type File interface {
 	Node
+}
+
+type LinkedDataFile interface {
+	fs.File
+	fs.ReadDirFile
+	Data() (interface{}, error)
 }
 
 type Tree interface {
@@ -97,18 +104,18 @@ type Tree interface {
 
 type PutResult interface {
 	CID() cid.Cid
-	ToLink(name string) mdstore.Link
-	ToSkeletonInfo() SkeletonInfo
+	ToLink(name string) Link
+	// ToSkeletonInfo() SkeletonInfo
 }
 
 type Header interface {
 	Previous() *cid.Cid
 }
 
-type TreeHeader interface {
-	Header
-	Skeleton() Skeleton
-}
+// type TreeHeader interface {
+// 	Header
+// 	Skeleton() Skeleton
+// }
 
 // info is header data + a userland CID
 type Info interface {
@@ -135,14 +142,112 @@ func Filename(file fs.File) (string, error) {
 	return fi.Name(), nil
 }
 
-func NodeFS(n Node) (MerkleDagFS, error) {
-	st, err := n.Stat()
+type Links struct {
+	l map[string]Link
+}
+
+func NewLinks(links ...Link) Links {
+	lks := Links{
+		l: map[string]Link{},
+	}
+
+	for _, link := range links {
+		lks.Add(link)
+	}
+
+	return lks
+}
+
+func DecodeLinksBlock(blk blocks.Block) (Links, error) {
+	lks := Links{l: map[string]Link{}}
+	n, err := cbornode.DecodeBlock(blk)
 	if err != nil {
-		return nil, err
+		return lks, err
 	}
-	mdfs, ok := st.Sys().(MerkleDagFS)
+	for _, l := range n.Links() {
+		lks.l[l.Name] = Link{
+			Name: l.Name,
+			Cid:  l.Cid,
+			Size: int64(l.Size),
+		}
+	}
+	return lks, nil
+}
+
+func (ls Links) Len() int {
+	return len(ls.l)
+}
+
+func (ls Links) Add(link Link) {
+	ls.l[link.Name] = link
+}
+
+func (ls Links) Remove(name string) bool {
+	_, existed := ls.l[name]
+	delete(ls.l, name)
+	return existed
+}
+
+func (ls Links) Get(name string) *Link {
+	lk, ok := ls.l[name]
 	if !ok {
-		return nil, fmt.Errorf("node Sys is not a MerkleDagFS")
+		return nil
 	}
-	return mdfs, nil
+
+	return &lk
+}
+
+func (ls Links) Slice() []Link {
+	links := make([]Link, 0, len(ls.l))
+	for _, link := range ls.l {
+		links = append(links, link)
+	}
+	return links
+}
+
+func (ls Links) SortedSlice() []Link {
+	names := make([]string, 0, len(ls.l))
+	for name := range ls.l {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	links := make([]Link, 0, len(ls.l))
+	for _, name := range names {
+		links = append(links, ls.l[name])
+	}
+	return links
+}
+
+func (ls Links) Map() map[string]Link {
+	return ls.l
+}
+
+func (ls Links) EncodeBlock() (blocks.Block, error) {
+	links := map[string]cid.Cid{}
+	for k, l := range ls.l {
+		links[k] = l.Cid
+	}
+	return cbornode.WrapObject(links, multihash.SHA2_256, -1)
+}
+
+type Link struct {
+	Name string
+	Size int64
+	Cid  cid.Cid
+
+	IsFile bool
+	Mtime  int64
+}
+
+func (l Link) IsEmpty() bool {
+	return l.Cid.String() == ""
+}
+
+func (l Link) IPLD() *format.Link {
+	return &format.Link{
+		Name: l.Name,
+		Cid:  l.Cid,
+		Size: uint64(l.Size),
+	}
 }
