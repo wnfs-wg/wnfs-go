@@ -8,28 +8,16 @@
 <body>
   {{ template "contentHeader" . }}
   <div id="content">
-    <div class="table-responsive">
-      <table>
-        <tbody>
-          <tr>
-            <td class="type-icon">dir</td>
-            <td><a href="{{ .Parent }}">..</a></td>
-          </tr>
-          {{- $path := .Path }}
-          {{- range .Node.ReadDir -1 }}
-            <tr>
-              <td class="type-icon">
-                {{- if .IsDir }}dir
-                {{ else }}file
-                {{ end }}
-              </td>
-              <td class="no-linebreak"><a href="{{ $path }}/{{ .Name }}">{{ .Name }}</a></td>
-              <td>{{ .Type }}</td>
-            </tr>
-          {{ end }}
-        </tbody>
-      </table>
-    </div>
+    {{ range .Diffs }}
+      <div class="table-responsive">
+        <div>
+          <p>{{ .Type }} <strong>{{ .Path }}</strong></p>
+        </div>
+        <div>
+          {{ DiffHTML . }}
+        </div>
+      </div>
+    {{ end }}
   </div>
 </body>
 </html>
