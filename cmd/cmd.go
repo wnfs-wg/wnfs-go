@@ -15,7 +15,6 @@ import (
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
-	base "github.com/qri-io/wnfs-go/base"
 	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
 	"github.com/qri-io/wnfs-go/gateway"
 	cli "github.com/urfave/cli/v2"
@@ -83,7 +82,7 @@ func main() {
 					if err != nil {
 						return nil
 					}
-					n, ok := f.(base.Node)
+					n, ok := f.(wnfs.Node)
 					if !ok {
 						return fmt.Errorf("wnfs did not return a node")
 					}

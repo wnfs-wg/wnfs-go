@@ -119,6 +119,11 @@ func PrettyPrintFileDiffs(diffs []FileDiff) string {
 	return b.String()
 }
 
+func HTMLPrintFileDiff(diffs FileDiff) string {
+	dmp := diffmatchpatch.New()
+	return dmp.DiffPrettyHtml(diffs.Diff)
+}
+
 func walkModified(path string, tree *Delta, visit func(dir string, delta *Delta) error) error {
 	if len(tree.Deltas) == 0 && tree.Type != DTUnchanged {
 		return visit(path, tree)

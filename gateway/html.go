@@ -6,22 +6,59 @@ import (
 	"html/template"
 	"io"
 	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/dustin/go-humanize"
+	"github.com/qri-io/wnfs-go"
 	"github.com/qri-io/wnfs-go/base"
+	"github.com/qri-io/wnfs-go/fsdiff"
 )
 
 //go:embed templates
 var templates embed.FS
 
-func RenderNode(w io.Writer, path string, nd base.Node) error {
-	tmpl, err := nodeTemplate(nd)
+func RenderIndex(w io.Writer, path string, nd base.Node) error {
+	tmpl, err := newTemplate(fmt.Sprintf("%s.html", nd.Type().String()))
 	if err != nil {
 		return err
 	}
 	return tmpl.Execute(w, map[string]interface{}{
-		"Parent": parent(path),
-		"Path":   path,
-		"Node":   nd,
+		"View":    "Index",
+		"Parent":  parent(path),
+		"Path":    path,
+		"Private": wnfs.NodeIsPrivate(nd),
+		"Node":    nd,
+	})
+}
+
+func RenderHistory(w io.Writer, path string, nd base.Node, hist []base.HistoryEntry) error {
+	tmpl, err := newTemplate("history.html")
+	if err != nil {
+		return err
+	}
+	return tmpl.Execute(w, map[string]interface{}{
+		"View":    "History",
+		"Parent":  parent(path),
+		"Path":    strings.TrimPrefix(path, "/history"),
+		"Private": wnfs.NodeIsPrivate(nd),
+		"Node":    nd,
+		"History": hist,
+	})
+}
+
+func RenderDiffs(w io.Writer, path string, nd base.Node, diffs []fsdiff.FileDiff) error {
+	tmpl, err := newTemplate("diff.html")
+	if err != nil {
+		return err
+	}
+	return tmpl.Execute(w, map[string]interface{}{
+		"View":    "Diff",
+		"Parent":  parent(path),
+		"Path":    strings.TrimPrefix(path, "/diff"),
+		"Private": wnfs.NodeIsPrivate(nd),
+		"Node":    nd,
+		"Diffs":   diffs,
 	})
 }
 
@@ -33,6 +70,19 @@ func parent(path string) string {
 	return parent
 }
 
-func nodeTemplate(n base.Node) (*template.Template, error) {
-	return template.ParseFS(templates, fmt.Sprintf("templates/%s.html", n.Type().String()))
+func newTemplate(name string) (*template.Template, error) {
+	return template.New(name).Funcs(template.FuncMap{
+		"Bytes": func(i int64) string {
+			return humanize.Bytes(uint64(i))
+		},
+		"RelTimestamp": func(i int64) string {
+			return humanize.Time(time.Unix(i, 0))
+		},
+		"Timestamp": func(i int64) string {
+			return time.Unix(i, 0).Format(time.RFC3339)
+		},
+		"DiffHTML": func(file fsdiff.FileDiff) template.HTML {
+			return template.HTML(fsdiff.HTMLPrintFileDiff(file))
+		},
+	}).ParseFS(templates, "templates/*.html")
 }

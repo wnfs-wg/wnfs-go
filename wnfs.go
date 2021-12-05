@@ -60,6 +60,7 @@ type PosixFS interface {
 }
 
 type (
+	Node         = base.Node
 	HistoryEntry = base.HistoryEntry
 	// PrivateName abstracts the private package, providing a uniform interface
 	// for wnfs that doesn't add a userland dependency
@@ -853,4 +854,13 @@ func (fac Factory) Load(ctx context.Context, id cid.Cid) (fs WNFS, err error) {
 
 func (fac Factory) LoadWithDecryption(ctx context.Context, id cid.Cid, name private.Name, key private.Key) (fs WNFS, err error) {
 	return FromCID(ctx, fac.BlockService, fac.Ratchets, id, key, name)
+}
+
+func NodeIsPrivate(n Node) bool {
+	switch n.(type) {
+	case *private.Root, *private.Tree, *private.File, *private.DataFile:
+		return true
+	default:
+		return false
+	}
 }

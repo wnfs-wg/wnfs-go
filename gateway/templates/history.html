@@ -10,21 +10,21 @@
   <div id="content">
     <div class="table-responsive">
       <table>
-        <tbody>
+        <thead>
           <tr>
-            <td class="type-icon">dir</td>
-            <td><a href="{{ .Parent }}">..</a></td>
+            <td>type</td>
+            <td>cid</td>
+            <td>modified</td>
+            <td>size</td>
           </tr>
-          {{- $path := .Path }}
-          {{- range .Node.ReadDir -1 }}
+        </thead>
+        <tbody>
+          {{ range .History }}
             <tr>
-              <td class="type-icon">
-                {{- if .IsDir }}dir
-                {{ else }}file
-                {{ end }}
-              </td>
-              <td class="no-linebreak"><a href="{{ $path }}/{{ .Name }}">{{ .Name }}</a></td>
-              <td>{{ .Type }}</td>
+              <td class="type-icon">{{ .Type }}</td>
+              <td class="no-linebreak"><a href="/{{ .Cid }}">{{ .Cid }}</a></td>
+              <td title="{{ Timestamp .Mtime }}">{{ RelTimestamp .Mtime }}</td>
+              <td>{{ Bytes .Size }}</td>
             </tr>
           {{ end }}
         </tbody>
