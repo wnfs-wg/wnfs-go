@@ -70,11 +70,11 @@ func copyStore(ctx context.Context, a Store, t *testing.T) Store {
 
 	blks := make([]blocks.Block, 0)
 	for key := range keys {
-		blk, err := abs.Get(key)
+		blk, err := abs.Get(ctx, key)
 		require.Nil(t, err)
 		blks = append(blks, blk)
 	}
-	err = store.Blockservice().Blockstore().PutMany(blks)
+	err = store.Blockservice().Blockstore().PutMany(ctx, blks)
 	require.Nil(t, err)
 
 	return store
@@ -114,7 +114,7 @@ func assertHasAllBlocks(t *testing.T, a, b blockstore.Blockstore) {
 
 	missing := []cid.Cid{}
 	for key := range keys {
-		has, err := a.Has(key)
+		has, err := a.Has(ctx, key)
 		require.Nil(t, err)
 		if !has {
 			missing = append(missing, key)

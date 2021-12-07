@@ -75,7 +75,7 @@ func CopyBlocks(ctx context.Context, id cid.Cid, src, dst blockservice.BlockServ
 		}
 	}
 
-	return dst.Blockstore().Put(blk)
+	return dst.Blockstore().Put(ctx, blk)
 }
 
 func AllKeys(ctx context.Context, bs blockstore.Blockstore) ([]cid.Cid, error) {

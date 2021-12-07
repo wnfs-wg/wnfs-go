@@ -32,7 +32,7 @@ func TestFileMetadata(t *testing.T) {
 	}
 
 	root := NewEmptyTree(store, "root")
-	root.SetMeta(expect)
+	root.SetMetadata(expect)
 
 	res, err := root.Put()
 	require.Nil(t, err)
@@ -40,7 +40,7 @@ func TestFileMetadata(t *testing.T) {
 	root, err = LoadTree(ctx, store, "root", res.CID())
 	require.Nil(t, err)
 
-	md, err := root.Meta()
+	md, err := root.Metadata()
 	require.Nil(t, err)
 
 	got, err := md.Data()

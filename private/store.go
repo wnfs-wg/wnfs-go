@@ -16,7 +16,6 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	ipldcbor "github.com/ipfs/go-ipld-cbor"
 	ipld "github.com/ipfs/go-ipld-format"
-	dag "github.com/ipfs/go-merkledag"
 	merkledag "github.com/ipfs/go-merkledag"
 	balanced "github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
@@ -109,14 +108,14 @@ func (cs *cipherStore) GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser
 		return nil, err
 	}
 
-	ses := dag.NewSession(cs.ctx, cs.dag)
+	ses := merkledag.NewSession(cs.ctx, cs.dag)
 
 	nd, err := ses.Get(cs.ctx, root)
 	if err != nil {
 		return nil, fmt.Errorf("getting cid %s: %w", root, err)
 	}
 
-	cf, err := cipherfile.NewCipherFile(cs.ctx, dag.NewReadOnlyDagService(ses), nd, auth)
+	cf, err := cipherfile.NewCipherFile(cs.ctx, merkledag.NewReadOnlyDagService(ses), nd, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -314,10 +313,26 @@ func (c *CborByteArray) UnmarshalCBOR(r io.Reader) error {
 }
 
 // Copy blocks from src to dst
-func CopyBlocks(ctx context.Context, id cid.Cid, src, dst Store) error {
-	n, err := src.DAGService().Get(ctx, id)
-	if err != nil {
-		return fmt.Errorf("reading DAG node: %w", err)
+func CopyBlocks(ctx context.Context, id cid.Cid, src, dst Store) (err error) {
+	var n ipld.Node
+	// TODO(b5): need to do this switch on codec because go-merkledag package no
+	// longer supports dag-cbor out of the box >:(
+	// More reasons to switch away from go-ipld libraries
+	switch id.Prefix().Codec {
+	case 0x71: // dag-cbor
+		blk, err := src.Blockservice().GetBlock(ctx, id)
+		if err != nil {
+			return err
+		}
+		n, err = ipldcbor.DecodeBlock(blk)
+		if err != nil {
+			return err
+		}
+	default:
+		n, err = src.DAGService().Get(ctx, id)
+		if err != nil {
+			return fmt.Errorf("reading DAG node %s: %w", id, err)
+		}
 	}
 
 	log.Debugw("CopyBlocks", "cid", id, "len(links)", len(n.Links()))
@@ -327,15 +342,15 @@ func CopyBlocks(ctx context.Context, id cid.Cid, src, dst Store) error {
 		}
 	}
 
-	return copyBlock(id, src, dst)
+	return copyBlock(ctx, id, src, dst)
 }
 
-func copyBlock(id cid.Cid, src, dst Store) error {
-	blk, err := src.Blockservice().Blockstore().Get(id)
+func copyBlock(ctx context.Context, id cid.Cid, src, dst Store) error {
+	blk, err := src.Blockservice().Blockstore().Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	return dst.Blockservice().Blockstore().Put(blk)
+	return dst.Blockservice().Blockstore().Put(ctx, blk)
 }
 
 func MergeHAMTBlocks(ctx context.Context, src, dst Store) error {
@@ -360,7 +375,7 @@ func MergeHAMTBlocks(ctx context.Context, src, dst Store) error {
 		return err
 	}
 
-	copyBlock(src.HAMT().cid, src, dst)
+	copyBlock(ctx, src.HAMT().cid, src, dst)
 
 	return dst.HAMT().Write(ctx)
 }

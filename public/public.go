@@ -467,12 +467,13 @@ func (t *Tree) Rm(path base.Path) (base.PutResult, error) {
 
 func (t *Tree) Put() (base.PutResult, error) {
 	store := t.store
+	ctx := context.TODO()
 
 	blk, err := t.userland.EncodeBlock()
 	if err != nil {
 		return nil, err
 	}
-	if err = store.Blockservice().Blockstore().Put(blk); err != nil {
+	if err = store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return nil, err
 	}
 	id := blk.Cid()
@@ -505,7 +506,7 @@ func (t *Tree) Put() (base.PutResult, error) {
 	if blk, err = t.h.encodeBlock(); err != nil {
 		return PutResult{}, err
 	}
-	if err := t.store.Blockservice().Blockstore().Put(blk); err != nil {
+	if err := t.store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return PutResult{}, err
 	}
 
@@ -835,6 +836,7 @@ func (f *File) SetFile(r io.ReadCloser) {
 
 func (f *File) Put() (base.PutResult, error) {
 	store := f.store
+	ctx := context.TODO()
 
 	userlandRes, err := store.PutFile(base.NewMemfileReader("", f.content))
 	if err != nil {
@@ -862,15 +864,15 @@ func (f *File) Put() (base.PutResult, error) {
 		return nil, err
 	}
 	f.cid = blk.Cid()
-	if err := f.store.Blockservice().Blockstore().Put(blk); err != nil {
+	if err := f.store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return nil, err
 	}
 
 	log.Debugw("wrote public file Header", "name", f.name, "cid", f.cid.String(), "info", f.h)
 	return PutResult{
-		Cid:      f.cid,
-		Size:     f.h.Info.Size,
-		Metadata: *f.h.Metadata,
+		Cid:  f.cid,
+		Size: f.h.Info.Size,
+		// Metadata: *f.h.Metadata,
 		Userland: *f.h.Userland,
 		Type:     f.h.Info.Type,
 	}, nil
@@ -1077,6 +1079,7 @@ func (df *LDFile) SetFile(data interface{}) {
 }
 
 func (df *LDFile) Put() (result base.PutResult, err error) {
+	ctx := context.TODO()
 	if df.bare {
 		blk, err := cbornode.WrapObject(df.content, base.DefaultMultihashType, -1)
 		if err != nil {
@@ -1086,7 +1089,7 @@ func (df *LDFile) Put() (result base.PutResult, err error) {
 		if err != nil {
 			return result, err
 		}
-		if err = df.store.Blockservice().Blockstore().Put(blk); err != nil {
+		if err = df.store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 			return result, err
 		}
 		df.cid = blk.Cid()
@@ -1112,7 +1115,7 @@ func (df *LDFile) Put() (result base.PutResult, err error) {
 	}
 	df.cid = blk.Cid()
 
-	if err = df.store.Blockservice().Blockstore().Put(blk); err != nil {
+	if err = df.store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return result, err
 	}
 
@@ -1172,7 +1175,7 @@ func (m *metaWrap) Metadata() (base.LDFile, error) {
 	return NewLDFile(nil, base.MetadataLinkName, m.meta), nil
 }
 
-func WrapFileMeta(f fs.File, meta interface{}) (wrapped fs.File) {
+func WrapFileMetadata(f fs.File, meta interface{}) (wrapped fs.File) {
 	if metaFile, ok := f.(base.WritableMetaNode); ok {
 		metaFile.SetMetadata(meta)
 		return f

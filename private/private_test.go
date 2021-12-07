@@ -11,6 +11,8 @@ import (
 
 	hamt "github.com/filecoin-project/go-hamt-ipld/v3"
 	cid "github.com/ipfs/go-cid"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
+	ipld "github.com/ipfs/go-ipld-format"
 	golog "github.com/ipfs/go-log"
 	"github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
@@ -159,8 +161,24 @@ func TestPrivateBlockWriting(t *testing.T) {
 }
 
 func allBlocksPresent(t *testing.T, id cid.Cid, store Store) {
-	ctx := context.Background()
-	n, err := store.DAGService().Get(ctx, id)
+	var (
+		ctx = context.Background()
+		n   ipld.Node
+		err error
+	)
+	// TODO(b5): need to do this switch on codec because go-merkledag package no
+	// longer supports dag-cbor out of the box >:(
+	// More reasons to switch away from go-ipld libraries
+	switch id.Prefix().Codec {
+	case 0x71: // dag-cbor
+		blk, err := store.Blockservice().GetBlock(ctx, id)
+		require.Nil(t, err)
+		n, err = ipldcbor.DecodeBlock(blk)
+		require.Nil(t, err)
+	default:
+		n, err = store.DAGService().Get(ctx, id)
+		require.Nil(t, err)
+	}
 	require.Nil(t, err)
 
 	log.Debugw("CopyBlocks", "cid", id, "len(links)", len(n.Links()))
@@ -168,7 +186,7 @@ func allBlocksPresent(t *testing.T, id cid.Cid, store Store) {
 		allBlocksPresent(t, l.Cid, store)
 	}
 
-	_, err = store.Blockservice().Blockstore().Get(id)
+	_, err = store.Blockservice().Blockstore().Get(ctx, id)
 	require.Nil(t, err)
 }
 

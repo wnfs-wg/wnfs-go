@@ -688,7 +688,7 @@ func (pt *Tree) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
-	if err = pt.fs.Blockservice().Blockstore().PutMany([]blocks.Block{blk, linksBlk}); err != nil {
+	if err = pt.fs.Blockservice().Blockstore().PutMany(ctx, []blocks.Block{blk, linksBlk}); err != nil {
 		return nil, err
 	}
 	pt.cid = blk.Cid()
@@ -903,7 +903,7 @@ func (pf *File) Put() (PutResult, error) {
 		return PutResult{}, err
 	}
 
-	if err := store.Blockservice().Blockstore().Put(blk); err != nil {
+	if err := store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return PutResult{}, err
 	}
 	pf.cid = blk.Cid()
@@ -1471,6 +1471,7 @@ func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
 func (df *DataFile) Put() (result PutResult, err error) {
 	df.ratchet.Inc()
 	key := df.ratchet.Key()
+	ctx := context.TODO()
 
 	// df.header.Info.Size = ???
 	df.header.Info.Ratchet = df.ratchet.Encode()
@@ -1487,7 +1488,7 @@ func (df *DataFile) Put() (result PutResult, err error) {
 		return result, err
 	}
 
-	if err = df.fs.Blockservice().Blockstore().Put(blk); err != nil {
+	if err = df.fs.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return result, err
 	}
 

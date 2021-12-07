@@ -128,7 +128,7 @@ size:	%d
 						if err = json.Unmarshal(d, &meta); err != nil {
 							return err
 						}
-						f = public.WrapFileMeta(f, meta)
+						f = public.WrapFileMetadata(f, meta)
 					}
 
 					if filepath.Ext(file) == ".json" {

@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 
+	blockservice "github.com/ipfs/go-blockservice"
 	cid "github.com/ipfs/go-cid"
+	flatfs "github.com/ipfs/go-ds-flatfs"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	wnfs "github.com/qri-io/wnfs-go"
-	wnipfs "github.com/qri-io/wnfs-go/cmd/ipfs"
 	private "github.com/qri-io/wnfs-go/private"
 	public "github.com/qri-io/wnfs-go/public"
 	ratchet "github.com/qri-io/wnfs-go/ratchet"
@@ -57,21 +59,13 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 		return nil, err
 	}
 
-	ipfsPath := filepath.Join(path, "ipfs")
-	if _, err := os.Stat(filepath.Join(ipfsPath, "config")); os.IsNotExist(err) {
-		if err := os.MkdirAll(ipfsPath, 0755); err != nil {
-			return nil, fmt.Errorf("creating ipfs repo: %w\n", err)
-		}
-		fmt.Printf("creating ipfs repo at %s ... ", ipfsPath)
-		if err = wnipfs.InitRepo(ipfsPath, ""); err != nil {
-			return nil, err
-		}
-		fmt.Println("done")
+	ffs, err := flatfs.CreateOrOpen(filepath.Join(path, "flatfs"), flatfs.IPFS_DEF_SHARD, false)
+	if err != nil {
+		return nil, err
 	}
-
-	store, err := wnipfs.NewFilesystem(ctx, map[string]interface{}{
-		"path": ipfsPath,
-	})
+	fbs := blockstore.NewBlockstoreNoPrefix(ffs)
+	bserv := blockservice.New(fbs, nil)
+	store := public.NewStore(ctx, bserv)
 
 	if err != nil {
 		return nil, fmt.Errorf("error: opening IPFS repo: %s\n", err)

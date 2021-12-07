@@ -501,6 +501,7 @@ func loadRoot(ctx context.Context, store public.Store, rs ratchet.Store, id cid.
 }
 
 func (r *rootTree) Put() (result base.PutResult, err error) {
+	ctx := context.TODO()
 	if r.id.Defined() {
 		r.h.Previous = &r.id
 	}
@@ -528,7 +529,7 @@ func (r *rootTree) Put() (result base.PutResult, err error) {
 	if err != nil {
 		return result, fmt.Errorf("constructing root header block: %w", err)
 	}
-	if err = r.store.Blockservice().AddBlock(blk); err != nil {
+	if err = r.store.Blockservice().AddBlock(ctx, blk); err != nil {
 		return result, fmt.Errorf("storing root header block: %w", err)
 	}
 	r.id = blk.Cid()
