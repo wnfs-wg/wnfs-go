@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +16,10 @@ import (
 	cbornode "github.com/ipfs/go-ipld-cbor"
 	golog "github.com/ipfs/go-log"
 	wnfs "github.com/qri-io/wnfs-go"
+	base "github.com/qri-io/wnfs-go/base"
 	fsdiff "github.com/qri-io/wnfs-go/fsdiff"
-	"github.com/qri-io/wnfs-go/gateway"
+	gateway "github.com/qri-io/wnfs-go/gateway"
+	public "github.com/qri-io/wnfs-go/public"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -99,6 +102,13 @@ size:	%d
 				Name:    "write",
 				Aliases: []string{"add"},
 				Usage:   "add a file to wnfs",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "meta",
+						Value: "",
+						Usage: "json file of metadata",
+					},
+				},
 				Action: func(c *cli.Context) error {
 					path := c.Args().Get(0)
 					file := c.Args().Get(1)
@@ -109,12 +119,24 @@ size:	%d
 						return err
 					}
 
+					if metaPath := c.String("meta"); metaPath != "" {
+						var meta interface{}
+						d, err := ioutil.ReadFile(metaPath)
+						if err != nil {
+							return err
+						}
+						if err = json.Unmarshal(d, &meta); err != nil {
+							return err
+						}
+						f = public.WrapFileMeta(f, meta)
+					}
+
 					if filepath.Ext(file) == ".json" {
 						var v interface{}
 						if err = json.NewDecoder(f).Decode(&v); err != nil {
 							return err
 						}
-						f = wnfs.NewDataFile(filepath.Base(path), v)
+						f = wnfs.NewLDFile(filepath.Base(path), v)
 					}
 
 					defer repo.Close()
@@ -272,6 +294,73 @@ size:	%d
 					defer repo.Close()
 					_, err = wnfs.Merge(cmdCtx, a, b)
 					return err
+				},
+			},
+			{
+				Name:  "meta",
+				Usage: "",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "set",
+						Usage: "",
+						Action: func(c *cli.Context) error {
+							defer repo.Close()
+							fs := repo.WNFS()
+							path := c.Args().Get(0)
+							metaPath := c.Args().Get(1)
+
+							d, err := ioutil.ReadFile(metaPath)
+							if err != nil {
+								return err
+							}
+
+							// TODO(b5): this needs to be replaced by a wnfs parser that
+							// understands links
+							var meta interface{}
+							if err = json.Unmarshal(d, &meta); err != nil {
+								return err
+							}
+
+							f, err := fs.Open(path)
+							if err != nil {
+								return err
+							}
+							if err = f.(base.WritableMetaNode).SetMetadata(meta); err != nil {
+								return err
+							}
+							if err = fs.Commit(); err != nil {
+								return err
+							}
+
+							return nil
+						},
+					},
+					{
+						Name:  "get",
+						Usage: "",
+						Action: func(c *cli.Context) error {
+							fs := repo.WNFS()
+							path := c.Args().Get(0)
+
+							f, err := fs.Open(path)
+							if err != nil {
+								return err
+							}
+
+							mdFile, err := f.(wnfs.Node).Metadata()
+							if err != nil {
+								return err
+							}
+
+							metaJSON, err := ioutil.ReadAll(mdFile)
+							if err != nil {
+								return err
+							}
+
+							fmt.Println(string(metaJSON))
+							return nil
+						},
+					},
 				},
 			},
 			{

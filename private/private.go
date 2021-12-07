@@ -292,7 +292,7 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
-func (pt *Tree) Meta() (base.LinkedDataFile, error) {
+func (pt *Tree) Metadata() (base.LDFile, error) {
 	return nil, nil
 	// return nil, fmt.Errorf("unfinished: private.Tree.Meta()")
 }
@@ -650,7 +650,7 @@ func (pt *Tree) createOrUpdateChildFile(ctx context.Context, name string, f fs.F
 		return prev.Update(f)
 	}
 
-	if dataFile, ok := f.(base.LinkedDataFile); ok {
+	if dataFile, ok := f.(base.LDFile); ok {
 		v, err := dataFile.Data()
 		if err != nil {
 			return nil, err
@@ -800,8 +800,8 @@ func (pf *File) Size() int64                    { return pf.header.Info.Size }
 func (pf *File) Sys() interface{}               { return pf.fs }
 func (pf *File) Stat() (fs.FileInfo, error)     { return pf, nil }
 
-func (pf *File) Meta() (base.LinkedDataFile, error) {
-	return nil, fmt.Errorf("unfinished: private.File.Meta()")
+func (pf *File) Metadata() (base.LDFile, error) {
+	return nil, fmt.Errorf("unfinished: private.File.Metadata")
 }
 
 func (pf *File) PrivateName() (Name, error) {
@@ -852,7 +852,7 @@ func (pf *File) ensureContent() (err error) {
 }
 
 func (pf *File) Update(change fs.File) (result PutResult, err error) {
-	if changeDF, ok := change.(base.LinkedDataFile); ok {
+	if changeDF, ok := change.(base.LDFile); ok {
 		v, err := changeDF.Data()
 		if err != nil {
 			return result, err
@@ -869,7 +869,7 @@ func (pf *File) Update(change fs.File) (result PutResult, err error) {
 			},
 		}
 		df.SetContents(v)
-		df.header.Info.Type = base.NTDataFile
+		df.header.Info.Type = base.NTLDFile
 		return df.Put()
 	}
 
@@ -981,7 +981,7 @@ func LoadNode(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (
 			header:  header,
 			ratchet: r,
 		}, nil
-	case base.NTDataFile:
+	case base.NTLDFile:
 		return &DataFile{
 			fs:      fs,
 			cid:     id,
@@ -1080,6 +1080,9 @@ func (pls PrivateLinks) marshalEncryptedBlock(key Key) (blocks.Block, error) {
 	data := append(nonce, ciphertext...)
 
 	hash, err := multihash.Sum(data, base.DefaultMultihashType, -1)
+	if err != nil {
+		return nil, err
+	}
 
 	return blocks.NewBlockWithCid(data, cid.NewCidV1(cid.Raw, hash))
 }
@@ -1245,7 +1248,7 @@ func decodeHeaderBlock(blk blocks.Block, key Key) (h Header, err error) {
 		}
 	}
 
-	if h.Info.Type == base.NTDataFile {
+	if h.Info.Type == base.NTLDFile {
 		// TODO(b5): this is probably the right place to decode content
 		if encValue, ok := env["value"].([]byte); ok {
 			plaintext, err = aead.Open(nil, encValue[:aead.NonceSize()], encValue[aead.NonceSize():], nil)
@@ -1292,16 +1295,16 @@ type DataFile struct {
 	name string
 	cid  cid.Cid
 
-	ratchet     *ratchet.Spiral
-	header      Header
-	Metadata    *cid.Cid
+	ratchet *ratchet.Spiral
+	header  Header
+	// metadata    *cid.Cid
 	content     interface{}
 	jsonContent *bytes.Buffer
 }
 
 var (
-	_ base.LinkedDataFile = (*DataFile)(nil)
-	_ base.Node           = (*DataFile)(nil)
+	_ base.LDFile = (*DataFile)(nil)
+	_ base.Node   = (*DataFile)(nil)
 )
 
 func NewDataFile(fs Store, name string, content interface{}, parent BareNamefilter) (*DataFile, error) {
@@ -1316,7 +1319,7 @@ func NewDataFile(fs Store, name string, content interface{}, parent BareNamefilt
 		name:    name,
 		ratchet: ratchet.NewSpiral(),
 		header: Header{
-			Info: NewHeaderInfo(base.NTDataFile, in, bnf),
+			Info: NewHeaderInfo(base.NTLDFile, in, bnf),
 		},
 		content: content,
 	}, nil
@@ -1400,7 +1403,7 @@ func (df *DataFile) PrivateName() (Name, error) {
 	return ToName(knf)
 }
 
-func (df *DataFile) Meta() (base.LinkedDataFile, error) {
+func (df *DataFile) Metadata() (base.LDFile, error) {
 	return nil, fmt.Errorf("unfinished: private.DataFile.Meta")
 }
 
@@ -1441,7 +1444,7 @@ func (df *DataFile) SetContents(data interface{}) {
 }
 
 func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
-	if changeDF, ok := change.(base.LinkedDataFile); ok {
+	if changeDF, ok := change.(base.LDFile); ok {
 		v, err := changeDF.Data()
 		if err != nil {
 			return result, err

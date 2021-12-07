@@ -582,11 +582,7 @@ type fataler interface {
 
 func newMemTestStore(ctx context.Context, f fataler) public.Store {
 	f.Helper()
-	store, err := public.NewStore(ctx, mockblocks.NewOfflineMemBlockservice())
-	if err != nil {
-		f.Fatal(err)
-	}
-	return store
+	return public.NewStore(ctx, mockblocks.NewOfflineMemBlockservice())
 }
 
 func newMemTestPrivateStore(ctx context.Context, f fataler) private.Store {
@@ -606,10 +602,6 @@ func newFileTestStore(ctx context.Context, f fataler) (st public.Store, cleanup 
 		f.Fatal(err)
 	}
 
-	store, err := public.NewStore(ctx, bserv)
-	if err != nil {
-		f.Fatal(err)
-	}
-
+	store := public.NewStore(ctx, bserv)
 	return store, cleanup
 }

@@ -38,8 +38,6 @@ type FSFileInfo struct {
 	mode  fs.FileMode // file mode bits
 	mtime time.Time   // modification time
 	sys   interface{}
-
-	cid cid.Cid // file identifier
 }
 
 func NewFSFileInfo(name string, size int64, mode fs.FileMode, mtime time.Time, sys interface{}) FSFileInfo {

@@ -80,7 +80,7 @@ func decodeHeaderBlock(blk blocks.Block) (*Header, error) {
 }
 
 func (h *Header) encodeBlock() (blocks.Block, error) {
-	dataFile := map[string]interface{}{
+	LDFile := map[string]interface{}{
 		"metadata": h.Metadata,
 		"previous": h.Previous,
 		"merge":    h.Merge,
@@ -89,9 +89,9 @@ func (h *Header) encodeBlock() (blocks.Block, error) {
 	}
 
 	if h.Info != nil {
-		dataFile["info"] = h.Info.Map()
+		LDFile["info"] = h.Info.Map()
 	}
-	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
+	return cbornode.WrapObject(LDFile, base.DefaultMultihashType, -1)
 }
 
 func (h *Header) links() base.Links {
@@ -177,17 +177,18 @@ type Tree struct {
 	cid   cid.Cid
 	h     *Header
 
-	metadata *DataFile
+	metadata *LDFile
 	skeleton Skeleton
 	userland base.Links // links to files are stored in "userland" Header key
 }
 
 var (
-	_ base.Tree      = (*Tree)(nil)
-	_ SkeletonSource = (*Tree)(nil)
-	_ fs.File        = (*Tree)(nil)
-	_ base.FileInfo  = (*Tree)(nil)
-	_ fs.ReadDirFile = (*Tree)(nil)
+	_ base.Tree             = (*Tree)(nil)
+	_ base.WritableMetaNode = (*Tree)(nil)
+	_ SkeletonSource        = (*Tree)(nil)
+	_ fs.File               = (*Tree)(nil)
+	_ base.FileInfo         = (*Tree)(nil)
+	_ fs.ReadDirFile        = (*Tree)(nil)
 )
 
 func NewEmptyTree(store Store, name string) *Tree {
@@ -262,14 +263,14 @@ func (t *Tree) Sys() interface{}           { return t.store }
 func (t *Tree) Cid() cid.Cid               { return t.cid }
 func (t *Tree) Stat() (fs.FileInfo, error) { return t, nil }
 
-func (t *Tree) SetMeta(md map[string]interface{}) error {
-	t.metadata = NewDataFile(t.store, "", md)
+func (t *Tree) SetMetadata(md interface{}) error {
+	t.metadata = NewLDFile(t.store, "", md)
 	return nil
 }
 
-func (t *Tree) Meta() (f base.LinkedDataFile, err error) {
+func (t *Tree) Metadata() (f base.LDFile, err error) {
 	if t.metadata == nil && t.h.Metadata != nil {
-		t.metadata, err = LoadDataFile(t.store.Context(), t.store, base.MetadataLinkName, *t.h.Metadata)
+		t.metadata, err = LoadLDFile(t.store.Context(), t.store, base.MetadataLinkName, *t.h.Metadata)
 	}
 	return t.metadata, err
 }
@@ -576,7 +577,7 @@ func (t *Tree) getOrCreateDirectChildTree(name string) (*Tree, error) {
 }
 
 func (t *Tree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
-	if sdFile, ok := f.(base.LinkedDataFile); ok {
+	if sdFile, ok := f.(base.LDFile); ok {
 		return t.createOrUpdateChildLDFile(name, sdFile)
 	}
 
@@ -621,7 +622,7 @@ func (t *Tree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File, 
 	return res, nil
 }
 
-func (t *Tree) createOrUpdateChildLDFile(name string, sdf base.LinkedDataFile) (base.PutResult, error) {
+func (t *Tree) createOrUpdateChildLDFile(name string, sdf base.LDFile) (base.PutResult, error) {
 	ctx := context.TODO()
 	content, err := sdf.Data()
 	if err != nil {
@@ -629,7 +630,7 @@ func (t *Tree) createOrUpdateChildLDFile(name string, sdf base.LinkedDataFile) (
 	}
 
 	if link := t.userland.Get(name); link != nil {
-		prev, err := LoadDataFile(ctx, t.store, name, link.Cid)
+		prev, err := LoadLDFile(ctx, t.store, name, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -638,13 +639,13 @@ func (t *Tree) createOrUpdateChildLDFile(name string, sdf base.LinkedDataFile) (
 		return prev.Put()
 	}
 
-	return NewDataFile(t.store, name, content).Put()
+	return NewLDFile(t.store, name, content).Put()
 }
 
 func (t *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, error) {
 	ctx := context.TODO()
 
-	if sdFile, ok := f.(base.LinkedDataFile); ok {
+	if sdFile, ok := f.(base.LDFile); ok {
 		return t.createOrUpdateChildLDFile(name, sdFile)
 	}
 
@@ -654,15 +655,19 @@ func (t *Tree) createOrUpdateChildFile(name string, f fs.File) (base.PutResult, 
 			return nil, err
 		}
 
-		previousFile.SetContents(f)
+		previousFile.SetFile(f)
 		return previousFile.Put()
 	}
 
-	ch := NewEmptyFile(t.store, name, f)
+	ch, err := NewFile(t.store, name, f)
+	if err != nil {
+		return nil, err
+	}
 	return ch.Put()
 }
 
 func (t *Tree) updateUserlandLink(name string, res base.PutResult) {
+	log.Debugw("updateUserlandLink", "name", name, "cid", res.CID())
 	t.userland.Add(res.ToLink(name))
 	t.skeleton[name] = res.(PutResult).ToSkeletonInfo()
 	t.h.Info.Mtime = base.Timestamp().Unix()
@@ -682,24 +687,49 @@ type File struct {
 	cid   cid.Cid
 	h     *Header
 
-	metadata *DataFile
+	metadata *LDFile
 	content  io.ReadCloser
 }
 
 var (
-	_ fs.File   = (*File)(nil)
-	_ base.Node = (*File)(nil)
+	_ base.Node             = (*Tree)(nil)
+	_ base.WritableMetaNode = (*Tree)(nil)
+	_ fs.File               = (*File)(nil)
+	_ base.Node             = (*File)(nil)
 )
 
-func NewEmptyFile(store Store, name string, content io.ReadCloser) *File {
+func NewFile(store Store, name string, content io.ReadCloser) (*File, error) {
+	var meta interface{}
+	if mdn, ok := content.(base.Metadata); ok {
+		md, err := mdn.Metadata()
+		if err != nil {
+			return nil, err
+		}
+		meta, err = md.Data()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return NewFileMetadata(store, name, content, meta)
+}
+
+func NewFileMetadata(store Store, name string, content io.ReadCloser, meta interface{}) (*File, error) {
+	var md *LDFile
+	if meta != nil {
+		// need to construct a new file here to keep stores aligned
+		md = NewBareLDFile(store, base.MetadataLinkName, meta)
+	}
+
 	return &File{
-		store:   store,
-		name:    name,
-		content: content,
+		store:    store,
+		name:     name,
+		content:  content,
+		metadata: md,
 		h: &Header{
 			Info: NewInfo(base.NTFile),
 		},
-	}
+	}, nil
 }
 
 func LoadFile(ctx context.Context, store Store, name string, id cid.Cid) (*File, error) {
@@ -713,12 +743,12 @@ func LoadFile(ctx context.Context, store Store, name string, id cid.Cid) (*File,
 
 func fileFromHeader(ctx context.Context, store Store, h *Header, name string, id cid.Cid) (*File, error) {
 	var (
-		md  *DataFile
+		md  *LDFile
 		err error
 	)
 
 	if h.Metadata != nil {
-		if md, err = LoadDataFile(ctx, store, base.MetadataLinkName, *h.Metadata); err != nil {
+		if md, err = LoadLDFile(ctx, store, base.MetadataLinkName, *h.Metadata); err != nil {
 			return nil, err
 		}
 	}
@@ -747,9 +777,18 @@ func (f *File) Sys() interface{}           { return f.store }
 func (f *File) Cid() cid.Cid               { return f.cid }
 func (f *File) Stat() (fs.FileInfo, error) { return f, nil }
 
-func (f *File) Meta() (res base.LinkedDataFile, err error) {
-	if f.metadata == nil && f.h.Metadata != nil {
-		f.metadata, err = LoadDataFile(f.store.Context(), f.store, base.MetadataLinkName, *f.h.Metadata)
+func (f *File) SetMetadata(v interface{}) error {
+	f.metadata = NewBareLDFile(f.store, base.MetadataLinkName, v)
+	return nil
+}
+
+func (f *File) Metadata() (res base.LDFile, err error) {
+	if f.metadata == nil {
+		if f.h.Metadata == nil {
+			return nil, base.ErrNoLink
+		}
+
+		f.metadata, err = LoadLDFile(f.store.Context(), f.store, base.MetadataLinkName, *f.h.Metadata)
 	}
 	return f.metadata, err
 }
@@ -778,8 +817,20 @@ func (f *File) Close() error {
 	return nil
 }
 
-func (f *File) SetContents(r io.ReadCloser) {
+func (f *File) SetFile(r io.ReadCloser) {
 	f.content = r
+
+	if mdn, ok := r.(base.Metadata); ok {
+		md, err := mdn.Metadata()
+		if err != nil {
+			return
+		}
+		meta, err := md.Data()
+		if err != nil {
+			return
+		}
+		f.metadata = NewBareLDFile(f.store, base.MetadataLinkName, meta)
+	}
 }
 
 func (f *File) Put() (base.PutResult, error) {
@@ -792,11 +843,12 @@ func (f *File) Put() (base.PutResult, error) {
 	f.h.Userland = &userlandRes.Cid
 
 	if f.metadata != nil {
-		_, err := f.metadata.Put()
+		log.Debugw("putting meta", "name", f.name)
+		res, err := f.metadata.Put()
 		if err != nil {
 			return nil, err
 		}
-		id := f.metadata.Cid()
+		id := res.CID()
 		f.h.Metadata = &id
 	}
 
@@ -814,11 +866,11 @@ func (f *File) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
-	log.Debugw("wrote public file Header", "name", f.name, "cid", f.cid.String())
+	log.Debugw("wrote public file Header", "name", f.name, "cid", f.cid.String(), "info", f.h)
 	return PutResult{
-		Cid:  f.cid,
-		Size: f.h.Info.Size,
-		// Metadata: *f.h.Metadata,
+		Cid:      f.cid,
+		Size:     f.h.Info.Size,
+		Metadata: *f.h.Metadata,
 		Userland: *f.h.Userland,
 		Type:     f.h.Info.Type,
 	}, nil
@@ -848,13 +900,13 @@ func loadNode(ctx context.Context, store Store, name string, id cid.Cid) (n base
 	switch h.Info.Type {
 	case base.NTFile:
 		return fileFromHeader(ctx, store, h, name, id)
-	case base.NTDataFile:
+	case base.NTLDFile:
 		blk, err := store.Blockservice().GetBlock(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		df := &DataFile{store: store, name: name, cid: id}
-		return decodeDataFileBlock(df, blk)
+		df := &LDFile{store: store, name: name, cid: id}
+		return decodeLDFileBlock(df, blk)
 	case base.NTDir:
 		return treeFromHeader(ctx, store, h, name, id)
 	default:
@@ -869,34 +921,44 @@ func loadNodeFromSkeletonInfo(ctx context.Context, store Store, name string, inf
 	return LoadTree(ctx, store, name, info.Cid)
 }
 
-type DataFile struct {
+type LDFile struct {
 	store Store
 	name  string
 	cid   cid.Cid
+	bare  bool
 
-	Info        *Info
-	Metadata    *cid.Cid
-	Previous    *cid.Cid // historical backpointer
+	info        *Info
+	metadata    *cid.Cid
+	previous    *cid.Cid // historical backpointer
 	content     interface{}
 	jsonContent *bytes.Buffer
 }
 
 var (
-	_ base.LinkedDataFile = (*DataFile)(nil)
-	_ base.Node           = (*DataFile)(nil)
+	_ base.LDFile = (*LDFile)(nil)
+	_ base.Node   = (*LDFile)(nil)
 )
 
-func NewDataFile(store Store, name string, content interface{}) *DataFile {
-	return &DataFile{
+func NewLDFile(store Store, name string, content interface{}) *LDFile {
+	return &LDFile{
 		store:   store,
 		name:    name,
-		Info:    NewInfo(base.NTDataFile),
+		info:    NewInfo(base.NTLDFile),
 		content: content,
 	}
 }
 
-func LoadDataFile(ctx context.Context, store Store, name string, id cid.Cid) (*DataFile, error) {
-	df := &DataFile{
+func NewBareLDFile(store Store, name string, content interface{}) *LDFile {
+	return &LDFile{
+		store:   store,
+		name:    name,
+		bare:    true,
+		content: content,
+	}
+}
+
+func LoadLDFile(ctx context.Context, store Store, name string, id cid.Cid) (*LDFile, error) {
+	df := &LDFile{
 		store: store,
 		name:  name,
 		cid:   id,
@@ -907,10 +969,10 @@ func LoadDataFile(ctx context.Context, store Store, name string, id cid.Cid) (*D
 		return nil, err
 	}
 
-	return decodeDataFileBlock(df, blk)
+	return decodeLDFileBlock(df, blk)
 }
 
-func decodeDataFileBlock(df *DataFile, blk blocks.Block) (*DataFile, error) {
+func decodeLDFileBlock(df *LDFile, blk blocks.Block) (*LDFile, error) {
 	env := map[string]interface{}{}
 	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
 		return nil, err
@@ -923,13 +985,13 @@ func decodeDataFileBlock(df *DataFile, blk blocks.Block) (*DataFile, error) {
 	// }
 	// nd.Links()
 
-	log.Debugw("decodeDataFileBlock", "info", env["info"], "env", env)
+	log.Debugw("decodeLDFileBlock", "info", env["info"], "env", env)
 
 	if info, ok := env["info"].(map[string]interface{}); ok {
-		df.Info = InfoFromMap(info)
-		if df.Info.WNFS == "" {
+		df.info = InfoFromMap(info)
+		if df.info.WNFS == "" {
 			// info MUST have wnfs key present, otherwise it's considered a bare data file
-			df.Info = nil
+			df.info = nil
 			df.content = env
 			return df, nil
 		}
@@ -939,62 +1001,63 @@ func decodeDataFileBlock(df *DataFile, blk blocks.Block) (*DataFile, error) {
 
 	// if no info block exists, parse as a bare data file
 	df.content = env
+	df.bare = true
 
 	return df, nil
 }
 
-func (df *DataFile) IsBare() bool      { return df.Info == nil }
-func (df *DataFile) Links() base.Links { return base.NewLinks() } // TODO(b5): remove Links method?
-func (df *DataFile) Name() string      { return df.name }
-func (df *DataFile) Size() int64 {
-	if df.Info != nil {
-		return df.Info.Size
+func (df *LDFile) IsBare() bool      { return df.bare }
+func (df *LDFile) Links() base.Links { return base.NewLinks() } // TODO(b5): remove Links method?
+func (df *LDFile) Name() string      { return df.name }
+func (df *LDFile) Size() int64 {
+	if df.info != nil {
+		return df.info.Size
 	}
 	return -1
 }
-func (df *DataFile) ModTime() time.Time {
-	if df.Info != nil {
-		return time.Unix(df.Info.Mtime, 0)
+func (df *LDFile) ModTime() time.Time {
+	if df.info != nil {
+		return time.Unix(df.info.Mtime, 0)
 	}
 	return time.Time{}
 }
-func (df *DataFile) Mode() fs.FileMode {
-	if df.Info != nil {
-		return fs.FileMode(df.Info.Mode)
+func (df *LDFile) Mode() fs.FileMode {
+	if df.info != nil {
+		return fs.FileMode(df.info.Mode)
 	}
 	return fs.FileMode(0)
 }
-func (df *DataFile) IsDir() bool                { return false }
-func (df *DataFile) Sys() interface{}           { return df.store }
-func (df *DataFile) Cid() cid.Cid               { return df.cid }
-func (df *DataFile) Stat() (fs.FileInfo, error) { return df, nil }
-func (df *DataFile) Data() (interface{}, error) { return df.content, nil }
-func (df *DataFile) Type() base.NodeType        { return base.NTDataFile }
-func (df *DataFile) ReadDir(n int) ([]fs.DirEntry, error) {
+func (df *LDFile) IsDir() bool                { return false }
+func (df *LDFile) Sys() interface{}           { return df.store }
+func (df *LDFile) Cid() cid.Cid               { return df.cid }
+func (df *LDFile) Stat() (fs.FileInfo, error) { return df, nil }
+func (df *LDFile) Data() (interface{}, error) { return df.content, nil }
+func (df *LDFile) Type() base.NodeType        { return base.NTLDFile }
+func (df *LDFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	return nil, fmt.Errorf("linked data file reading incomplete")
 }
 
-func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
+func (df *LDFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	// TODO(b5): support history
 	return nil, fmt.Errorf("data files don't yet support history")
 	// return history(ctx, df, maxRevs)
 }
 
-func (df *DataFile) Read(p []byte) (n int, err error) {
+func (df *LDFile) Read(p []byte) (n int, err error) {
 	df.ensureContent()
 	return df.jsonContent.Read(p)
 }
 
-func (df *DataFile) SetMeta(m *DataFile) error {
+func (df *LDFile) SetMetadata(m interface{}) error {
 	// df.metadata = m
 	return nil
 }
 
-func (df *DataFile) Meta() (base.LinkedDataFile, error) {
-	return nil, fmt.Errorf("unfinished: public.DataFile.Meta()")
+func (df *LDFile) Metadata() (base.LDFile, error) {
+	return nil, fmt.Errorf("unfinished: public.LDFile.Meta()")
 }
 
-func (df *DataFile) ensureContent() (err error) {
+func (df *LDFile) ensureContent() (err error) {
 	if df.jsonContent == nil {
 		buf := &bytes.Buffer{}
 		// TODO(b5): use faster json lib
@@ -1006,19 +1069,41 @@ func (df *DataFile) ensureContent() (err error) {
 	return nil
 }
 
-func (df *DataFile) Close() error { return nil }
+func (df *LDFile) Close() error { return nil }
 
-func (df *DataFile) SetContents(data interface{}) {
+func (df *LDFile) SetFile(data interface{}) {
 	df.content = data
 	df.jsonContent = nil
 }
 
-func (df *DataFile) Put() (result base.PutResult, err error) {
-	if df.cid.Defined() {
-		df.Previous = &df.cid
+func (df *LDFile) Put() (result base.PutResult, err error) {
+	if df.bare {
+		blk, err := cbornode.WrapObject(df.content, base.DefaultMultihashType, -1)
+		if err != nil {
+			return result, err
+		}
+		size, err := blk.Size()
+		if err != nil {
+			return result, err
+		}
+		if err = df.store.Blockservice().Blockstore().Put(blk); err != nil {
+			return result, err
+		}
+		df.cid = blk.Cid()
+		return PutResult{
+			Cid:  blk.Cid(),
+			Size: int64(size),
+
+			Userland: blk.Cid(),
+			Type:     base.NTLDFile,
+		}, nil
 	}
-	if df.Info == nil {
-		df.Info = &Info{}
+
+	if df.cid.Defined() {
+		df.previous = &df.cid
+	}
+	if df.info == nil {
+		df.info = &Info{}
 	}
 
 	blk, err := df.encodeBlock()
@@ -1034,33 +1119,33 @@ func (df *DataFile) Put() (result base.PutResult, err error) {
 	log.Debugw("wrote public data file", "name", df.name, "cid", df.cid.String())
 	return PutResult{
 		Cid:      df.cid,
-		Size:     df.Info.Size,
+		Size:     df.info.Size,
 		Userland: df.cid,
-		Type:     df.Info.Type,
+		Type:     df.info.Type,
 	}, nil
 }
 
-func (df *DataFile) AsHistoryEntry() base.HistoryEntry {
+func (df *LDFile) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
 		Cid:      df.cid,
-		Size:     df.Info.Size,
-		Type:     df.Info.Type,
-		Mtime:    df.Info.Mtime,
-		Previous: df.Previous,
+		Size:     df.info.Size,
+		Type:     df.info.Type,
+		Mtime:    df.info.Mtime,
+		Previous: df.previous,
 	}
 }
 
-func (df *DataFile) encodeBlock() (blocks.Block, error) {
-	dataFile := map[string]interface{}{
-		"metadata": df.Metadata,
-		"previous": df.Previous,
+func (df *LDFile) encodeBlock() (blocks.Block, error) {
+	LDFile := map[string]interface{}{
+		"metadata": df.metadata,
+		"previous": df.previous,
 		"content":  df.content,
 	}
-	if df.Info != nil {
-		dataFile["info"] = df.Info.Map()
+	if df.info != nil {
+		LDFile["info"] = df.info.Map()
 	}
 
-	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
+	return cbornode.WrapObject(LDFile, base.DefaultMultihashType, -1)
 }
 
 func mergeResultToSkeletonInfo(mr base.MergeResult) SkeletonInfo {
@@ -1070,5 +1155,31 @@ func mergeResultToSkeletonInfo(mr base.MergeResult) SkeletonInfo {
 		Metadata:    mr.Metadata,
 		SubSkeleton: nil,
 		IsFile:      mr.IsFile,
+	}
+}
+
+type metaWrap struct {
+	fs.File
+	meta interface{}
+}
+
+func (m *metaWrap) SetMetadata(v interface{}) error {
+	m.meta = v
+	return nil
+}
+
+func (m *metaWrap) Metadata() (base.LDFile, error) {
+	return NewLDFile(nil, base.MetadataLinkName, m.meta), nil
+}
+
+func WrapFileMeta(f fs.File, meta interface{}) (wrapped fs.File) {
+	if metaFile, ok := f.(base.WritableMetaNode); ok {
+		metaFile.SetMetadata(meta)
+		return f
+	}
+
+	return &metaWrap{
+		f,
+		meta,
 	}
 }

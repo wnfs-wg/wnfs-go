@@ -84,5 +84,20 @@ func newTemplate(name string) (*template.Template, error) {
 		"DiffHTML": func(file fsdiff.FileDiff) template.HTML {
 			return template.HTML(fsdiff.HTMLPrintFileDiff(file))
 		},
+		"MetaHTML": func(v interface{}) template.HTML {
+			str := strings.Builder{}
+			switch x := v.(type) {
+			case map[string]interface{}:
+				str.WriteString("<table>\n")
+				for key, val := range x {
+					str.WriteString(fmt.Sprintf("<tr><td>%s</td><td>%s</td></tr>\n", key, val))
+				}
+				str.WriteString("</table>\n")
+			case []interface{}:
+				// TODO(b5)
+			}
+
+			return template.HTML(str.String())
+		},
 	}).ParseFS(templates, "templates/*.html")
 }

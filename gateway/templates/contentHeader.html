@@ -18,12 +18,5 @@
       <a href="/diff{{ .Path }}">diff</a>
     </nav>
   </div>
-  <div>
-    {{ $meta := .Node.Meta }}
-    {{ if $meta }}
-      <h2>Meta</h2>
-      {{ $meta }}
-    {{ end }}
-  </div>
 </header>
 {{ end }}

@@ -138,11 +138,11 @@ func TestDataFileCoding(t *testing.T) {
 	store := newMemTestStore(ctx, t)
 
 	data := []interface{}{"oh", "hai"}
-	df := NewDataFile(store, "data_file", data)
+	df := NewLDFile(store, "data_file", data)
 	_, err := df.Put()
 	require.Nil(t, err)
 
-	got, err := LoadDataFile(ctx, store, df.Name(), df.Cid())
+	got, err := LoadLDFile(ctx, store, df.Name(), df.Cid())
 	require.Nil(t, err)
 
 	assert.Equal(t, df, got)
@@ -156,10 +156,7 @@ type fataler interface {
 
 func newMemTestStore(ctx context.Context, f fataler) Store {
 	f.Helper()
-	store, err := NewStore(ctx, mockblocks.NewOfflineMemBlockservice())
-	if err != nil {
-		f.Fatal(err)
-	}
+	store := NewStore(ctx, mockblocks.NewOfflineMemBlockservice())
 	return store
 }
 

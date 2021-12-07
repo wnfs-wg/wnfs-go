@@ -171,7 +171,7 @@ func (r PutResult) ToLink(name string) base.Link {
 		Name:   name,
 		Cid:    r.Cid,
 		Size:   r.Size,
-		IsFile: (r.Type == base.NTFile || r.Type == base.NTDataFile),
+		IsFile: (r.Type == base.NTFile || r.Type == base.NTLDFile),
 	}
 }
 
@@ -181,6 +181,6 @@ func (r PutResult) ToSkeletonInfo() SkeletonInfo {
 		Metadata:    r.Metadata,
 		Userland:    r.Userland,
 		SubSkeleton: r.Skeleton,
-		IsFile:      (r.Type == base.NTFile || r.Type == base.NTDataFile),
+		IsFile:      (r.Type == base.NTFile || r.Type == base.NTLDFile),
 	}
 }

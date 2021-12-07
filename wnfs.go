@@ -41,6 +41,7 @@ type WNFS interface {
 
 	Cid() cid.Cid
 	History(ctx context.Context, pathStr string, generations int) ([]HistoryEntry, error)
+	Commit() error
 }
 
 type PosixFS interface {
@@ -77,8 +78,7 @@ type PrivateFS interface {
 }
 
 type MutationOptions struct {
-	SourceFS fs.FS
-	Commit   bool
+	Commit bool
 }
 
 func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
@@ -358,6 +358,11 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 	}
 }
 
+func (fsys *fileSystem) Commit() error {
+	_, err := fsys.root.Put()
+	return err
+}
+
 type rootHeader struct {
 	Info     *public.Info
 	Previous *cid.Cid
@@ -424,7 +429,7 @@ type rootTree struct {
 	h *rootHeader
 
 	// Pretty   *base.BareTree
-	metadata *public.DataFile
+	metadata *public.LDFile
 	Public   *public.Tree
 	Private  *private.Root
 }
@@ -540,14 +545,14 @@ func (r *rootTree) Type() base.NodeType { return r.h.Info.Type }
 func (r *rootTree) ModTime() time.Time  { return time.Unix(r.h.Info.Mtime, 0) }
 func (r *rootTree) Sys() interface{}    { return r.store }
 
-func (r *rootTree) SetMeta(md map[string]interface{}) error {
-	r.metadata = public.NewDataFile(r.store, "", md)
+func (r *rootTree) SetMetadata(md interface{}) error {
+	r.metadata = public.NewLDFile(r.store, "", md)
 	return nil
 }
 
-func (r *rootTree) Meta() (f base.LinkedDataFile, err error) {
+func (r *rootTree) Metadata() (f base.LDFile, err error) {
 	if r.metadata == nil && r.h.Metadata != nil {
-		r.metadata, err = public.LoadDataFile(r.store.Context(), r.store, base.MetadataLinkName, *r.h.Metadata)
+		r.metadata, err = public.LoadLDFile(r.store.Context(), r.store, base.MetadataLinkName, *r.h.Metadata)
 	}
 	return r.metadata, err
 }
@@ -797,7 +802,7 @@ var (
 	_ fs.FileInfo        = (*dataFile)(nil)
 )
 
-func NewDataFile(name string, data interface{}) StructuredDataFile {
+func NewLDFile(name string, data interface{}) StructuredDataFile {
 	return &dataFile{
 		name:    name,
 		content: data,

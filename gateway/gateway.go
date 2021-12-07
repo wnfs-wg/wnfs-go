@@ -46,7 +46,7 @@ func (s *Server) HandleIndex(e echo.Context) error {
 			log.Errorw("writing response error", "err", err)
 			return err
 		}
-	case base.NTDataFile:
+	case base.NTLDFile:
 		e.Response().Header().Set("Content-Type", "application/json")
 		if _, err = io.Copy(e.Response(), n); err != nil {
 			log.Errorw("writing response error", "err", err)
