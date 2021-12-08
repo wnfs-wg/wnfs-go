@@ -42,7 +42,7 @@ type NodeType uint8
 
 const (
 	NTFile NodeType = iota
-	NTDataFile
+	NTLDFile
 	NTDir
 	NTSymlink    // reserved for future use
 	NTUnixFSFile // reserved for future use
@@ -53,8 +53,8 @@ func (nt NodeType) String() string {
 	switch nt {
 	case NTFile:
 		return "file"
-	case NTDataFile:
-		return "datafile"
+	case NTLDFile:
+		return "LDFile"
 	case NTDir:
 		return "dir"
 	case NTSymlink:
@@ -79,14 +79,14 @@ type Node interface {
 	Type() NodeType
 	AsHistoryEntry() HistoryEntry
 	History(ctx context.Context, limit int) ([]HistoryEntry, error)
-	Meta() (LinkedDataFile, error)
+	Metadata() (LDFile, error)
 }
 
 type File interface {
 	Node
 }
 
-type LinkedDataFile interface {
+type LDFile interface {
 	fs.File
 	fs.ReadDirFile
 	Data() (interface{}, error)
@@ -105,22 +105,22 @@ type Tree interface {
 type PutResult interface {
 	CID() cid.Cid
 	ToLink(name string) Link
-	// ToSkeletonInfo() SkeletonInfo
 }
 
-type Header interface {
-	Previous() *cid.Cid
+type Metadata interface {
+	Metadata() (LDFile, error)
 }
 
-// type TreeHeader interface {
-// 	Header
-// 	Skeleton() Skeleton
-// }
+type WritableMetaNode interface {
+	Node
+	SetMetadata(v interface{}) error
+}
 
-// info is header data + a userland CID
-type Info interface {
-	Header
-	Userland() cid.Cid
+func FileMetadata(f fs.File) (LDFile, error) {
+	if mdf, ok := f.(Metadata); ok {
+		return mdf.Metadata()
+	}
+	return nil, nil
 }
 
 type HistoryEntry struct {

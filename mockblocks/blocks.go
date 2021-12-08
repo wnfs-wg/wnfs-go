@@ -37,23 +37,23 @@ func NewMemBlockstore() *memBlockstore {
 	return &memBlockstore{make(map[cid.Cid]block.Block), blockstoreStats{}}
 }
 
-func (mb *memBlockstore) DeleteBlock(id cid.Cid) error {
+func (mb *memBlockstore) DeleteBlock(_ context.Context, id cid.Cid) error {
 	return nil
 }
 
-func (mb *memBlockstore) Has(c cid.Cid) (bool, error) {
+func (mb *memBlockstore) Has(ctx context.Context, c cid.Cid) (bool, error) {
 	_, has := mb.data[c]
 	return has, nil
 }
 
 // GetSize returns the CIDs mapped BlockSize
-func (mb *memBlockstore) GetSize(cid.Cid) (int, error) {
+func (mb *memBlockstore) GetSize(context.Context, cid.Cid) (int, error) {
 	return 0, fmt.Errorf("unfinished: memBlockstore.GetSize")
 }
 
 // PutMany puts a slice of blocks at the same time using batching
 // capabilities of the underlying datastore whenever possible.
-func (mb *memBlockstore) PutMany(bs []block.Block) error {
+func (mb *memBlockstore) PutMany(_ context.Context, bs []block.Block) error {
 	for _, blk := range bs {
 		mb.data[blk.Cid()] = blk
 	}
@@ -80,7 +80,7 @@ func (mb *memBlockstore) HashOnRead(enabled bool) {
 	// noop
 }
 
-func (mb *memBlockstore) Get(c cid.Cid) (block.Block, error) {
+func (mb *memBlockstore) Get(_ context.Context, c cid.Cid) (block.Block, error) {
 	mb.stats.evtcntGet++
 	d, ok := mb.data[c]
 	if ok {
@@ -89,7 +89,7 @@ func (mb *memBlockstore) Get(c cid.Cid) (block.Block, error) {
 	return nil, fmt.Errorf("Not Found")
 }
 
-func (mb *memBlockstore) Put(b block.Block) error {
+func (mb *memBlockstore) Put(_ context.Context, b block.Block) error {
 	mb.stats.evtcntPut++
 	if _, exists := mb.data[b.Cid()]; exists {
 		mb.stats.evtcntPutDup++

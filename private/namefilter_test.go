@@ -3,7 +3,7 @@ package private
 import (
 	"testing"
 
-	"github.com/qri-io/wnfs-go/bloom"
+	"github.com/qri-io/wnfs-go/private/bloom"
 )
 
 func TestNamefilter(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"strings"
 
-	"github.com/qri-io/wnfs-go/bloom"
+	"github.com/qri-io/wnfs-go/private/bloom"
 	"golang.org/x/crypto/sha3"
 )
 

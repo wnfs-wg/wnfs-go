@@ -191,7 +191,7 @@ func mergeTrees(ctx context.Context, destStore Store, a, b *Tree) (*Tree, error)
 				Size:   n.Size(),
 				Cid:    n.Cid(),
 				Mtime:  n.ModTime().Unix(),
-				IsFile: (n.Type() == base.NTFile || n.Type() == base.NTDataFile),
+				IsFile: (n.Type() == base.NTFile || n.Type() == base.NTLDFile),
 			})
 			checked[remName] = struct{}{}
 			continue

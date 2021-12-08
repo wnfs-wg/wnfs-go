@@ -1,11 +1,11 @@
 default: build
 
 build:
-	cd ./cmd && go build -o wnfs .
+	go build -o wnfs ./cmd
 
 install:
-	cd ./cmd && go build -o wnfs .
-	cp wnfs /usr/local/bin/wnfs
+	go build -o wnfs ./cmd
+	cp wnfs /usr/local/go/bin/wnfs
 
 test:
 	go test --race --coverprofile=coverage.txt ./...
