@@ -12,7 +12,7 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	base "github.com/qri-io/wnfs-go/base"
 	mockblocks "github.com/qri-io/wnfs-go/mockblocks"
-	ratchet "github.com/qri-io/wnfs-go/ratchet"
+	ratchet "github.com/qri-io/wnfs-go/private/ratchet"
 	assert "github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 )

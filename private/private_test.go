@@ -16,7 +16,7 @@ import (
 	golog "github.com/ipfs/go-log"
 	"github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
-	"github.com/qri-io/wnfs-go/ratchet"
+	"github.com/qri-io/wnfs-go/private/ratchet"
 	"github.com/stretchr/testify/assert"
 	require "github.com/stretchr/testify/require"
 	cbg "github.com/whyrusleeping/cbor-gen"

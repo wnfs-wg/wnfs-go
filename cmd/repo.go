@@ -14,8 +14,8 @@ import (
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	wnfs "github.com/qri-io/wnfs-go"
 	private "github.com/qri-io/wnfs-go/private"
+	ratchet "github.com/qri-io/wnfs-go/private/ratchet"
 	public "github.com/qri-io/wnfs-go/public"
-	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 
 	cid "github.com/ipfs/go-cid"
 	"github.com/qri-io/wnfs-go/base"
-	ratchet "github.com/qri-io/wnfs-go/ratchet"
+	ratchet "github.com/qri-io/wnfs-go/private/ratchet"
 )
 
 var EmptyKey = Key([32]byte{})

@@ -15,8 +15,8 @@ import (
 	base "github.com/qri-io/wnfs-go/base"
 	mockblocks "github.com/qri-io/wnfs-go/mockblocks"
 	"github.com/qri-io/wnfs-go/private"
+	"github.com/qri-io/wnfs-go/private/ratchet"
 	"github.com/qri-io/wnfs-go/public"
-	"github.com/qri-io/wnfs-go/ratchet"
 	"github.com/stretchr/testify/require"
 )
 

@@ -21,8 +21,8 @@ import (
 	golog "github.com/ipfs/go-log"
 	multihash "github.com/multiformats/go-multihash"
 	base "github.com/qri-io/wnfs-go/base"
+	ratchet "github.com/qri-io/wnfs-go/private/ratchet"
 	public "github.com/qri-io/wnfs-go/public"
-	ratchet "github.com/qri-io/wnfs-go/ratchet"
 )
 
 var log = golog.Logger("wnfs")

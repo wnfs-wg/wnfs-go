@@ -1,11 +1,13 @@
 {{ define "metadata" }}
-{{ $meta := .Node.Metadata.Data }}
-{{ if $meta }}
-<div style="margin: 1em; padding: 1em; background: #efefef; border-radius: 5px;">
-  <div class="d-flex flex-wrap">
-    <strong>meta</strong>
-    {{ MetaHTML $meta }}
+{{ if .Node.Metadata }}
+  {{ $meta := .Node.Metadata }}
+  {{ if $meta }}
+  <div style="margin: 1em; padding: 1em; background: #efefef; border-radius: 5px;">
+    <div class="d-flex flex-wrap">
+      <strong>meta</strong>
+      {{ MetaHTML $meta }}
+    </div>
   </div>
-</div>
+  {{ end }}
 {{ end }}
 {{ end }}
