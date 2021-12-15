@@ -302,11 +302,11 @@ func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tre
 		}
 
 		// node exists in both trees & CIDs are inequal. merge recursively
-		lcl, err := LoadNode(ctx, a.fs, localInfo.Name, localInfo.Cid, localInfo.Key)
+		lcl, err := LoadNode(ctx, a.store, localInfo.Name, localInfo.Cid, localInfo.Key)
 		if err != nil {
 			return res, err
 		}
-		rem, err := LoadNode(ctx, b.fs, remInfo.Name, remInfo.Cid, remInfo.Key)
+		rem, err := LoadNode(ctx, b.store, remInfo.Name, remInfo.Cid, remInfo.Key)
 		if err != nil {
 			return res, err
 		}
@@ -350,7 +350,7 @@ func mergeDivergedTrees(ctx context.Context, destfs Store, a, b *Tree) (res *Tre
 	a.header.Info.Mtime = base.Timestamp().Unix()
 
 	merged := &Tree{
-		fs:      destfs,
+		store:   destfs,
 		ratchet: a.ratchet,
 		name:    a.name,
 		links:   a.links,
@@ -377,7 +377,7 @@ func mergeDivergedNode(ctx context.Context, destfs Store, a, b privateNode) (res
 	switch t := a.(type) {
 	case *Tree:
 		merged := &Tree{
-			fs:      destfs,
+			store:   destfs,
 			cid:     t.cid,
 			header:  t.header,
 			ratchet: t.ratchet,
@@ -392,7 +392,7 @@ func mergeDivergedNode(ctx context.Context, destfs Store, a, b privateNode) (res
 		}
 
 		merged := &File{
-			fs:      destfs,
+			store:   destfs,
 			ratchet: t.ratchet,
 			header:  t.header,
 			name:    t.name,

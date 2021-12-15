@@ -864,7 +864,7 @@ func (fac Factory) LoadWithDecryption(ctx context.Context, id cid.Cid, name priv
 
 func NodeIsPrivate(n Node) bool {
 	switch n.(type) {
-	case *private.Root, *private.Tree, *private.File, *private.DataFile:
+	case *private.Root, *private.Tree, *private.File, *private.LDFile:
 		return true
 	default:
 		return false
