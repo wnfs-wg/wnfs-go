@@ -4,12 +4,8 @@ build:
 	go build -o wnfs ./cmd
 
 .PHONY: install
-install: wnfs
+install: build
 	@install -C wnfs /usr/local/go/bin/wnfs
-
-# install:
-# 	go build -o wnfs ./cmd
-# 	cp wnfs /usr/local/go/bin/wnfs
 
 test:
 	go test --race --coverprofile=coverage.txt ./...

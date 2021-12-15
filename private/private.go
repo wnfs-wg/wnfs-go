@@ -287,10 +287,6 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 		Type:        pt.header.Info.Type,
 		Key:         pt.Key().Encode(),
 		PrivateName: string(n),
-		// TODO(b5):
-		// Previous: prevCID(pt.store, pt.ratchet, pt.header.Info.BareNamefilter),
-		// Metadata: pt.info.Metadata,
-		// Size:     pt.info.Size,
 	}
 }
 

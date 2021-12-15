@@ -41,33 +41,30 @@ type WNFS interface {
 
 	Cid() cid.Cid
 	History(ctx context.Context, pathStr string, generations int) ([]HistoryEntry, error)
-	Commit() error
+	Commit() (CommitResult, error)
 }
 
 type PosixFS interface {
 	// directories (trees)
 	Ls(pathStr string) ([]fs.DirEntry, error)
-	Mkdir(pathStr string, opts ...MutationOptions) error
+	Mkdir(pathStr string) error
 
 	// files
-	Write(pathStr string, f fs.File, opts ...MutationOptions) error
+	Write(pathStr string, f fs.File) error
 	Cat(pathStr string) ([]byte, error)
 	Open(pathStr string) (fs.File, error)
 
 	// general
 	// Mv(from, to string) error
-	Cp(pathStr, srcPathStr string, src fs.FS, opts ...MutationOptions) error
-	Rm(pathStr string, opts ...MutationOptions) error
+	Cp(pathStr, srcPathStr string, src fs.FS) error
+	Rm(pathStr string) error
 }
 
 type (
 	Node         = base.Node
 	HistoryEntry = base.HistoryEntry
-	// PrivateName abstracts the private package, providing a uniform interface
-	// for wnfs that doesn't add a userland dependency
-	PrivateName = private.Name
-	// Key hoists up from the private package
-	Key = private.Key
+	PrivateName  = private.Name
+	Key          = private.Key
 )
 
 var NewKey = private.NewKey
@@ -75,17 +72,6 @@ var NewKey = private.NewKey
 type PrivateFS interface {
 	RootKey() private.Key
 	PrivateName() (PrivateName, error)
-}
-
-type MutationOptions struct {
-	Commit bool
-}
-
-func (o MutationOptions) assign(opts []MutationOptions) MutationOptions {
-	for _, opt := range opts {
-		o.Commit = opt.Commit
-	}
-	return o
 }
 
 type fileSystem struct {
@@ -198,34 +184,24 @@ func (fsys *fileSystem) Ls(pathStr string) ([]fs.DirEntry, error) {
 	return dir.ReadDir(-1)
 }
 
-func (fsys *fileSystem) Mkdir(pathStr string, opts ...MutationOptions) error {
+func (fsys *fileSystem) Mkdir(pathStr string) error {
 	log.Debugw("fileSystem.Mkdir", "pathStr", pathStr)
-	opt := MutationOptions{}.assign(opts)
-
 	tree, path, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
 		return err
 	}
 
-	tree.Mkdir(path)
-
-	if opt.Commit {
-		_, err := fsys.root.Put()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	_, err = tree.Mkdir(path)
+	return err
 }
 
 func (fsys *fileSystem) Open(pathStr string) (fs.File, error) {
+	log.Debugw("fileSystem.Open", "pathStr", pathStr)
 	tree, path, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Debugw("fileSystem.Open", "pathStr", pathStr, "path", path)
 	return tree.Get(path)
 }
 
@@ -237,32 +213,19 @@ func (fsys *fileSystem) Cat(pathStr string) ([]byte, error) {
 	return ioutil.ReadAll(f)
 }
 
-func (fsys *fileSystem) Cp(pathStr, srcPath string, src fs.FS, opts ...MutationOptions) error {
+func (fsys *fileSystem) Cp(pathStr, srcPath string, src fs.FS) error {
 	log.Debugw("fileSystem.Cp", "pathStr", pathStr, "srcPath", srcPath)
-	opt := MutationOptions{}.assign(opts)
-
 	node, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
 		return err
 	}
 
-	if _, err := node.Copy(relPath, srcPath, src); err != nil {
-		return err
-	}
-
-	if opt.Commit {
-		_, err := fsys.root.Put()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = node.Copy(relPath, srcPath, src)
+	return err
 }
 
-func (fsys *fileSystem) Write(pathStr string, f fs.File, opts ...MutationOptions) error {
+func (fsys *fileSystem) Write(pathStr string, f fs.File) error {
 	log.Debugw("fileSystem.Write", "pathStr", pathStr)
-	opt := MutationOptions{}.assign(opts)
-
 	_, isDataFile := f.(StructuredDataFile)
 	fi, err := f.Stat()
 	if err != nil {
@@ -277,41 +240,19 @@ func (fsys *fileSystem) Write(pathStr string, f fs.File, opts ...MutationOptions
 		return err
 	}
 
-	if _, err := node.Add(relPath, f); err != nil {
-		return err
-	}
-
-	if opt.Commit {
-		_, err := fsys.root.Put()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	_, err = node.Add(relPath, f)
+	return err
 }
 
-func (fsys *fileSystem) Rm(pathStr string, opts ...MutationOptions) error {
+func (fsys *fileSystem) Rm(pathStr string) error {
 	log.Debugw("fileSystem.Rm", "pathStr", pathStr)
-	opt := MutationOptions{}.assign(opts)
-
 	tree, relPath, err := fsys.fsHierarchyDirectoryNode(pathStr)
 	if err != nil {
 		return err
 	}
 
-	if _, err := tree.Rm(relPath); err != nil {
-		return err
-	}
-
-	if opt.Commit {
-		_, err := fsys.root.Put()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	_, err = tree.Rm(relPath)
+	return err
 }
 
 func (fsys *fileSystem) History(ctx context.Context, pathStr string, max int) ([]HistoryEntry, error) {
@@ -330,7 +271,7 @@ func (fsys *fileSystem) History(ctx context.Context, pathStr string, max int) ([
 
 	ch, ok := f.(base.Node)
 	if !ok {
-		return nil, fmt.Errorf("path %q is not a node", pathStr)
+		return nil, fmt.Errorf("path %q is not a node", pathStr)
 	}
 
 	return ch.History(ctx, max)
@@ -358,9 +299,29 @@ func (fsys *fileSystem) fsHierarchyDirectoryNode(pathStr string) (dir base.Tree,
 	}
 }
 
-func (fsys *fileSystem) Commit() error {
-	_, err := fsys.root.Put()
-	return err
+type CommitResult struct {
+	Root        cid.Cid
+	PrivateName *PrivateName
+	PrivateKey  *Key
+}
+
+func (fsys *fileSystem) Commit() (res CommitResult, err error) {
+	if err = fsys.root.Commit(); err != nil {
+		return res, err
+	}
+
+	pn, err := fsys.PrivateName()
+	if err != nil {
+		return res, err
+	}
+
+	key := fsys.RootKey()
+
+	return CommitResult{
+		Root:        fsys.root.id,
+		PrivateName: &pn,
+		PrivateKey:  &key,
+	}, err
 }
 
 type rootHeader struct {
@@ -424,6 +385,7 @@ type rootTree struct {
 	store   public.Store
 	pstore  private.Store
 	id      cid.Cid
+	tx      cid.Cid // transaction start CID
 	rootKey Key
 
 	h *rootHeader
@@ -462,7 +424,7 @@ func newEmptyRootTree(store public.Store, rs ratchet.Store, rootKey Key) (root *
 }
 
 func loadRoot(ctx context.Context, store public.Store, rs ratchet.Store, id cid.Cid, rootKey Key, rootName PrivateName) (r *rootTree, err error) {
-	r = &rootTree{store: store, id: id, rootKey: rootKey}
+	r = &rootTree{store: store, id: id, tx: id, rootKey: rootKey}
 
 	blk, err := store.Blockservice().GetBlock(ctx, id)
 	if err != nil {
@@ -502,9 +464,7 @@ func loadRoot(ctx context.Context, store public.Store, rs ratchet.Store, id cid.
 
 func (r *rootTree) Put() (result base.PutResult, err error) {
 	ctx := context.TODO()
-	if r.id.Defined() {
-		r.h.Previous = &r.id
-	}
+
 	r.h.Info.Mtime = base.Timestamp().Unix()
 	if r.Public != nil {
 		id := r.Public.Cid()
@@ -535,6 +495,17 @@ func (r *rootTree) Put() (result base.PutResult, err error) {
 	r.id = blk.Cid()
 	log.Debugw("rootTree.Put", "linksLen", r.Links().Len(), "cid", r.id)
 	return result, nil
+}
+
+func (r *rootTree) Commit() error {
+	if r.tx.Defined() {
+		r.h.Previous = &r.tx
+	}
+	if _, err := r.Put(); err != nil {
+		return err
+	}
+	r.tx = r.id
+	return nil
 }
 
 func (r *rootTree) Cid() cid.Cid        { return r.id }
@@ -733,50 +704,48 @@ func (r *rootTree) MergeDiverged(n base.Node) (result base.MergeResult, err erro
 	return base.MergeResult{}, fmt.Errorf("unfinished: root tree MergeDiverged")
 }
 
-func Merge(ctx context.Context, aFs, bFs WNFS) (result base.MergeResult, err error) {
+func Merge(ctx context.Context, aFs, bFs WNFS) (err error) {
 	a, ok := aFs.(*fileSystem)
 	if !ok {
-		return result, fmt.Errorf("'a' is not a wnfs filesystem")
+		return fmt.Errorf("'a' is not a wnfs filesystem")
 	}
 	b, ok := bFs.(*fileSystem)
 	if !ok {
-		return result, fmt.Errorf("'b' is not a wnfs filesystem")
+		return fmt.Errorf("'b' is not a wnfs filesystem")
 	}
 	log.Debugw("Merge", "acid", a.Cid(), "bcid", b.Cid())
 
 	if a.root.Public != nil && b.root.Public != nil {
 		res, err := public.Merge(ctx, a.root.Public, b.root.Public)
 		if err != nil {
-			return result, err
+			return err
 		}
 		log.Debugw("merged public", "result", res.Cid)
 		fmt.Printf("/public:\t%s\n", res.Type)
 		a.root.Public, err = public.LoadTree(ctx, a.root.store, FileHierarchyNamePublic, res.Cid)
 		if err != nil {
-			return base.MergeResult{}, err
+			return err
 		}
 	}
+
 	if a.root.Private != nil && b.root.Private != nil {
 		res, err := private.Merge(ctx, a.root.Private, b.root.Private)
 		if err != nil {
-			return result, err
+			return err
 		}
 		log.Debugw("merged private", "result", res.Cid)
 		fmt.Printf("/private:\t%s\n", res.Type)
 		pk := &private.Key{}
 		if err := pk.Decode(res.Key); err != nil {
-			return result, err
+			return err
 		}
 		a.root.Private, err = private.LoadRoot(a.root.store.Context(), a.root.pstore, FileHierarchyNamePrivate, *pk, private.Name(res.PrivateName))
 		if err != nil {
-			return result, err
+			return err
 		}
 	}
 
-	_, err = a.root.Put()
-
-	// TODO(b5): populate result
-	return result, nil
+	return nil
 }
 
 func HAMTContents(ctx context.Context, bs blockservice.BlockService, id cid.Cid) (map[string]string, error) {
