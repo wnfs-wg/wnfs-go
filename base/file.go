@@ -11,6 +11,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	cid "github.com/ipfs/go-cid"
+	ipldcbor "github.com/ipfs/go-ipld-cbor"
 )
 
 var Timestamp = time.Now
@@ -168,4 +169,46 @@ func EncodeCBOR(v interface{}) (*bytes.Buffer, error) {
 		return nil, err
 	}
 	return buf, err
+}
+
+func toSaneMap(n map[interface{}]interface{}) (interface{}, error) {
+	out := make(map[string]interface{})
+	for k, v := range n {
+		ks, ok := k.(string)
+		if !ok {
+			return nil, ipldcbor.ErrInvalidKeys
+		}
+
+		obj, err := SanitizeCBORForJSON(v)
+		if err != nil {
+			return nil, err
+		}
+
+		out[ks] = obj
+	}
+
+	return out, nil
+}
+
+func SanitizeCBORForJSON(v interface{}) (interface{}, error) {
+	switch v := v.(type) {
+	case map[interface{}]interface{}:
+		return toSaneMap(v)
+	case []interface{}:
+		var out []interface{}
+		if len(v) == 0 && v != nil {
+			return []interface{}{}, nil
+		}
+		for _, i := range v {
+			obj, err := SanitizeCBORForJSON(i)
+			if err != nil {
+				return nil, err
+			}
+
+			out = append(out, obj)
+		}
+		return out, nil
+	default:
+		return v, nil
+	}
 }

@@ -68,12 +68,12 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 	store := public.NewStore(ctx, bserv)
 
 	if err != nil {
-		return nil, fmt.Errorf("error: opening IPFS repo: %s\n", err)
+		return nil, fmt.Errorf("error: opening IPFS repo: %w", err)
 	}
 
 	state, err := loadOrCreateState(ctx, filepath.Join(path, stateFilename))
 	if err != nil {
-		return nil, fmt.Errorf("error: loading external state: %s\n", err)
+		return nil, fmt.Errorf("error: loading external state: %w", err)
 	}
 
 	rs, err := ratchet.NewStore(ctx, filepath.Join(path, ratchetsFilename))
@@ -89,13 +89,13 @@ func OpenRepoPath(ctx context.Context, path string) (*Repo, error) {
 	var fs wnfs.WNFS
 	if state.RootCID.Equals(cid.Cid{}) {
 		fmt.Printf("creating new wnfs filesystem...")
-		if fs, err = wnfs.NewEmptyFS(ctx, store.Blockservice(), rs, state.RootKey); err != nil {
-			return nil, fmt.Errorf("error: creating empty WNFS: %s\n", err)
+		if fs, err = wnfs.NewEmptyFS(ctx, store.Blockservice(), rs, state.GetRootKey()); err != nil {
+			return nil, fmt.Errorf("error: creating empty WNFS: %w", err)
 		}
 		fmt.Println("done")
 	} else {
-		if fs, err = wnfs.FromCID(ctx, store.Blockservice(), rs, state.RootCID, state.RootKey, state.PrivateRootName); err != nil {
-			return nil, fmt.Errorf("error: opening WNFS CID %s:\n%s\n", state.RootCID, err.Error())
+		if fs, err = wnfs.FromCID(ctx, store.Blockservice(), rs, state.RootCID, state.GetRootKey(), state.GetPrivateName()); err != nil {
+			return nil, fmt.Errorf("error: opening WNFS CID %s:\n%w", state.RootCID, err)
 		}
 	}
 
@@ -120,17 +120,22 @@ func (r *Repo) Factory() wnfs.Factory {
 	}
 }
 
-func (r *Repo) Close() error {
-	r.state.RootCID = r.fs.Cid()
-	r.state.RootKey = r.fs.RootKey()
-	var err error
-	r.state.PrivateRootName, err = r.fs.PrivateName()
+func (r *Repo) Commit(fs wnfs.WNFS) error {
+	res, err := fs.Commit()
 	if err != nil {
-		return fmt.Errorf("reading private name: %w", err)
+		return err
 	}
-	if err = r.dec.PutDecryptionFields(r.state.RootCID, r.state.PrivateRootName, r.state.RootKey); err != nil {
-		return fmt.Errorf("updating decryption store: %w", err)
+
+	r.state.RootCID = res.Root
+	r.state.PrivateRootName = res.PrivateName
+	r.state.RootKey = res.PrivateKey
+
+	if r.state.PrivateRootName != nil && r.state.RootKey != nil {
+		if err = r.dec.PutDecryptionFields(r.state.RootCID, *r.state.PrivateRootName, *r.state.RootKey); err != nil {
+			return fmt.Errorf("updating decryption store: %w", err)
+		}
 	}
+
 	fmt.Printf("writing root cid: %s ...", r.state.RootCID)
 	if err := r.state.Write(); err != nil {
 		fmt.Printf("\n")
@@ -143,8 +148,8 @@ func (r *Repo) Close() error {
 type State struct {
 	path            string
 	RootCID         cid.Cid
-	RootKey         wnfs.Key
-	PrivateRootName wnfs.PrivateName
+	RootKey         *wnfs.Key
+	PrivateRootName *wnfs.PrivateName
 }
 
 func loadOrCreateState(ctx context.Context, path string) (*State, error) {
@@ -152,10 +157,10 @@ func loadOrCreateState(ctx context.Context, path string) (*State, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("creating external state file: %q\n", path)
-
+			key := wnfs.NewKey()
 			s := &State{
 				path:    path,
-				RootKey: wnfs.NewKey(),
+				RootKey: &key,
 			}
 			err = s.Write()
 			return s, err
@@ -172,10 +177,25 @@ func loadOrCreateState(ctx context.Context, path string) (*State, error) {
 	// construct a key if one doesn't exist
 	if s.RootKey.IsEmpty() {
 		fmt.Println("creating new root key")
-		s.RootKey = wnfs.NewKey()
+		key := wnfs.NewKey()
+		s.RootKey = &key
 		return s, s.Write()
 	}
 	return s, nil
+}
+
+func (s *State) GetRootKey() wnfs.Key {
+	if s.RootKey == nil {
+		return wnfs.Key{}
+	}
+	return *s.RootKey
+}
+
+func (s *State) GetPrivateName() wnfs.PrivateName {
+	if s.PrivateRootName == nil {
+		return wnfs.PrivateName("")
+	}
+	return *s.PrivateRootName
 }
 
 func (s *State) Write() error {

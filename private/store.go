@@ -29,6 +29,7 @@ import (
 )
 
 type Store interface {
+	Context() context.Context
 	PutEncryptedFile(f fs.File, key []byte) (PutResult, error)
 	GetEncryptedFile(root cid.Cid, key []byte) (io.ReadCloser, error)
 
@@ -38,6 +39,7 @@ type Store interface {
 	RatchetStore() ratchet.Store
 }
 
+// NodeStore extracts a private store from a wnfs.Node
 func NodeStore(n base.Node) (Store, error) {
 	st, err := n.Stat()
 	if err != nil {
@@ -97,6 +99,7 @@ func LoadStore(ctx context.Context, bserv blockservice.BlockService, rs ratchet.
 	}, nil
 }
 
+func (cs *cipherStore) Context() context.Context                { return cs.ctx }
 func (cs *cipherStore) DAGService() ipld.DAGService             { return cs.dag }
 func (cs *cipherStore) Blockservice() blockservice.BlockService { return cs.bserv }
 func (cs *cipherStore) HAMT() *HAMT                             { return cs.hamt }

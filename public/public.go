@@ -975,6 +975,7 @@ func LoadLDFile(ctx context.Context, store Store, name string, id cid.Cid) (*LDF
 }
 
 func decodeLDFileBlock(df *LDFile, blk blocks.Block) (*LDFile, error) {
+	// TODO(b5): this will choke on a data file with an array top level
 	env := map[string]interface{}{}
 	if err := cbornode.DecodeInto(blk.RawData(), &env); err != nil {
 		return nil, err
@@ -1181,6 +1182,7 @@ func WrapFileMetadata(f fs.File, meta interface{}) (wrapped fs.File) {
 		return f
 	}
 
+	log.Debugw("wrapping file in meta", "meta", meta)
 	return &metaWrap{
 		f,
 		meta,

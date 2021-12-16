@@ -114,10 +114,10 @@ func LoadRoot(ctx context.Context, store Store, name string, rootKey Key, rootNa
 
 func (r *Root) Context() context.Context { return r.ctx }
 func (r *Root) Cid() cid.Cid {
-	if r.fs.HAMT() == nil {
+	if r.store.HAMT() == nil {
 		return cid.Undef
 	}
-	return r.fs.HAMT().CID()
+	return r.store.HAMT().CID()
 }
 func (r *Root) HAMTCid() *cid.Cid {
 	id := r.Cid()
@@ -167,10 +167,10 @@ func (r *Root) Mkdir(path base.Path) (res base.PutResult, err error) {
 
 func (r *Root) Put() (base.PutResult, error) {
 	ctx := context.TODO()
-	log.Debugw("Root.Put", "name", r.name, "hamtCID", r.fs.HAMT().CID(), "key", Key(r.ratchet.Key()).Encode())
+	log.Debugw("Root.Put", "name", r.name, "hamtCID", r.store.HAMT().CID(), "key", Key(r.ratchet.Key()).Encode())
 
 	// TODO(b5): note entirely sure this is necessary
-	if _, err := r.fs.RatchetStore().PutRatchet(ctx, r.header.Info.INumber.Encode(), r.ratchet); err != nil {
+	if _, err := r.store.RatchetStore().PutRatchet(ctx, r.header.Info.INumber.Encode(), r.ratchet); err != nil {
 		return nil, err
 	}
 
@@ -183,8 +183,8 @@ func (r *Root) Put() (base.PutResult, error) {
 
 func (r *Root) putRoot() error {
 	ctx := context.TODO()
-	if r.fs.HAMT() != nil {
-		if err := r.fs.HAMT().Write(ctx); err != nil {
+	if r.store.HAMT() != nil {
+		if err := r.store.HAMT().Write(ctx); err != nil {
 			return err
 		}
 	}
@@ -192,28 +192,30 @@ func (r *Root) putRoot() error {
 	if err != nil {
 		return err
 	}
-	log.Debugw("putRoot", "privateName", string(pn), "name", r.name, "hamtCID", r.fs.HAMT().CID(), "key", Key(r.ratchet.Key()).Encode())
-	return r.fs.RatchetStore().Flush()
+	log.Debugw("putRoot", "privateName", string(pn), "name", r.name, "hamtCID", r.store.HAMT().CID(), "key", Key(r.ratchet.Key()).Encode())
+	return r.store.RatchetStore().Flush()
 }
 
 type Tree struct {
-	fs   Store
-	name string  // not stored on the node. used to satisfy fs.File interface
-	cid  cid.Cid // header node cid this tree was loaded from. empty if unstored
+	store Store
+	name  string  // not stored on the node. used to satisfy fs.File interface
+	cid   cid.Cid // header node cid this tree was loaded from. empty if unstored
 
-	header  Header
-	ratchet *ratchet.Spiral
-	links   PrivateLinks
+	header   Header
+	ratchet  *ratchet.Spiral
+	metadata *LDFile
+	links    PrivateLinks
 }
 
 var (
-	_ privateTree    = (*Tree)(nil)
-	_ Info           = (*Tree)(nil)
-	_ fs.File        = (*Tree)(nil)
-	_ fs.ReadDirFile = (*Tree)(nil)
+	_ privateTree           = (*Tree)(nil)
+	_ base.WritableMetaNode = (*Tree)(nil)
+	_ Info                  = (*Tree)(nil)
+	_ fs.File               = (*Tree)(nil)
+	_ fs.ReadDirFile        = (*Tree)(nil)
 )
 
-func NewEmptyTree(fs Store, parent BareNamefilter, name string) (*Tree, error) {
+func NewEmptyTree(store Store, parent BareNamefilter, name string) (*Tree, error) {
 	in := NewINumber()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
@@ -221,7 +223,7 @@ func NewEmptyTree(fs Store, parent BareNamefilter, name string) (*Tree, error) {
 	}
 
 	return &Tree{
-		fs:      fs,
+		store:   store,
 		ratchet: ratchet.NewSpiral(),
 		name:    name,
 		header: Header{
@@ -231,11 +233,11 @@ func NewEmptyTree(fs Store, parent BareNamefilter, name string) (*Tree, error) {
 	}, nil
 }
 
-func LoadTree(fs Store, name string, key Key, id cid.Cid) (*Tree, error) {
+func LoadTree(store Store, name string, key Key, id cid.Cid) (*Tree, error) {
 	log.Debugw("LoadTree", "name", name, "cid", id)
 	ctx := context.TODO()
 
-	header, err := loadHeader(ctx, fs, key, id)
+	header, err := loadHeader(ctx, store, key, id)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +249,7 @@ func LoadTree(fs Store, name string, key Key, id cid.Cid) (*Tree, error) {
 	header.Info.Ratchet = ""
 
 	return &Tree{
-		fs:      fs,
+		store:   store,
 		name:    name,
 		ratchet: ratchet,
 		cid:     id,
@@ -269,13 +271,13 @@ func (pt *Tree) ModTime() time.Time             { return time.Unix(pt.header.Inf
 func (pt *Tree) Mode() fs.FileMode              { return fs.FileMode(pt.header.Info.Ctime) }
 func (pt *Tree) Type() base.NodeType            { return pt.header.Info.Type }
 func (pt *Tree) IsDir() bool                    { return true }
-func (pt *Tree) Sys() interface{}               { return pt.fs }
+func (pt *Tree) Sys() interface{}               { return pt.store }
 func (pt *Tree) Stat() (fs.FileInfo, error)     { return pt, nil }
 func (pt *Tree) Cid() cid.Cid                   { return pt.cid }
 func (pt *Tree) INumber() INumber               { return pt.header.Info.INumber }
 func (pt *Tree) Ratchet() *ratchet.Spiral       { return pt.ratchet }
 func (pt *Tree) BareNamefilter() BareNamefilter { return pt.header.Info.BareNamefilter }
-func (pt *Tree) PrivateFS() Store               { return pt.fs }
+func (pt *Tree) PrivateFS() Store               { return pt.store }
 func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 	n, _ := pt.PrivateName()
 	return base.HistoryEntry{
@@ -285,21 +287,28 @@ func (pt *Tree) AsHistoryEntry() base.HistoryEntry {
 		Type:        pt.header.Info.Type,
 		Key:         pt.Key().Encode(),
 		PrivateName: string(n),
-		// TODO(b5):
-		// Previous: prevCID(pt.fs, pt.ratchet, pt.header.Info.BareNamefilter),
-		// Metadata: pt.info.Metadata,
-		// Size:     pt.info.Size,
 	}
 }
 
-func (pt *Tree) Metadata() (base.LDFile, error) {
-	return nil, nil
-	// return nil, fmt.Errorf("unfinished: private.Tree.Meta()")
+func (pt *Tree) SetMetadata(md interface{}) (err error) {
+	log.Debugw("setting tree metadata", "name", pt.name)
+	pt.metadata, err = newLDFileRatchet(pt.store, "", md, pt.BareNamefilter(), pt.ratchet)
+	return err
+}
+
+func (pt *Tree) Metadata() (f base.LDFile, err error) {
+	if pt.metadata == nil {
+		if !pt.header.Metadata.Defined() {
+			return nil, base.ErrNoLink
+		}
+		pt.metadata, err = LoadLDFile(pt.store.Context(), pt.store, base.MetadataLinkName, pt.header.Metadata, pt.Key())
+	}
+	return pt.metadata, err
 }
 
 func (pt *Tree) ensureLinks(ctx context.Context) error {
 	if pt.links == nil {
-		blk, err := pt.fs.Blockservice().GetBlock(ctx, pt.header.ContentID)
+		blk, err := pt.store.Blockservice().GetBlock(ctx, pt.header.ContentID)
 		if err != nil {
 			return err
 		}
@@ -433,7 +442,7 @@ func (pt *Tree) Get(path base.Path) (fs.File, error) {
 	}
 
 	if tail != nil {
-		ch, err := LoadTree(pt.fs, head, link.Key, link.Cid)
+		ch, err := LoadTree(pt.store, head, link.Key, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -442,7 +451,7 @@ func (pt *Tree) Get(path base.Path) (fs.File, error) {
 		return ch.Get(tail)
 	}
 
-	return LoadNode(context.TODO(), pt.fs, head, link.Cid, link.Key)
+	return LoadNode(context.TODO(), pt.store, head, link.Cid, link.Key)
 }
 
 func (pt *Tree) Rm(path base.Path) (base.PutResult, error) {
@@ -461,7 +470,7 @@ func (pt *Tree) Rm(path base.Path) (base.PutResult, error) {
 		if link == nil {
 			return nil, base.ErrNotFound
 		}
-		child, err := LoadTree(pt.fs, link.Name, link.Key, link.Cid)
+		child, err := LoadTree(pt.store, link.Name, link.Key, link.Cid)
 		if err != nil {
 			return nil, err
 		}
@@ -584,10 +593,10 @@ func (pt *Tree) getOrCreateDirectChildTree(name string) (*Tree, error) {
 	}
 	link := pt.links.Get(name)
 	if link == nil {
-		return NewEmptyTree(pt.fs, pt.header.Info.BareNamefilter, name)
+		return NewEmptyTree(pt.store, pt.header.Info.BareNamefilter, name)
 	}
 
-	return LoadTree(pt.fs, name, link.Key, link.Cid)
+	return LoadTree(pt.store, name, link.Key, link.Cid)
 }
 
 func (pt *Tree) createOrUpdateChild(srcPathStr, name string, f fs.File, srcFS fs.FS) (base.PutResult, error) {
@@ -616,12 +625,12 @@ func (pt *Tree) createOrUpdateChildDirectory(srcPathStr, name string, f fs.File,
 
 	var tree *Tree
 	if link := pt.links.Get(name); link != nil {
-		tree, err = LoadTree(pt.fs, link.Name, link.Key, link.Cid)
+		tree, err = LoadTree(pt.store, link.Name, link.Key, link.Cid)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		tree, err = NewEmptyTree(pt.fs, pt.header.Info.BareNamefilter, name)
+		tree, err = NewEmptyTree(pt.store, pt.header.Info.BareNamefilter, name)
 		if err != nil {
 			return nil, err
 		}
@@ -642,7 +651,7 @@ func (pt *Tree) createOrUpdateChildFile(ctx context.Context, name string, f fs.F
 		return nil, err
 	}
 	if link := pt.links.Get(name); link != nil {
-		prev, err := LoadNode(ctx, pt.fs, link.Name, link.Cid, link.Key)
+		prev, err := LoadNode(ctx, pt.store, link.Name, link.Cid, link.Key)
 		if err != nil {
 			log.Debugw("createOrUpdateChildFile", "err", err)
 			return nil, err
@@ -650,19 +659,19 @@ func (pt *Tree) createOrUpdateChildFile(ctx context.Context, name string, f fs.F
 		return prev.Update(f)
 	}
 
-	if dataFile, ok := f.(base.LDFile); ok {
-		v, err := dataFile.Data()
+	if LDFile, ok := f.(base.LDFile); ok {
+		v, err := LDFile.Data()
 		if err != nil {
 			return nil, err
 		}
-		df, err := NewDataFile(pt.fs, name, v, pt.header.Info.BareNamefilter)
+		df, err := NewLDFile(pt.store, name, v, pt.header.Info.BareNamefilter)
 		if err != nil {
 			return nil, err
 		}
 		return df.Put()
 	}
 
-	ch, err := NewFile(pt.fs, pt.header.Info.BareNamefilter, f)
+	ch, err := NewFile(pt.store, pt.header.Info.BareNamefilter, f)
 	if err != nil {
 		return nil, err
 	}
@@ -683,12 +692,21 @@ func (pt *Tree) Put() (base.PutResult, error) {
 	}
 	pt.header.ContentID = linksBlk.Cid()
 
+	if pt.metadata != nil {
+		res, err := pt.metadata.Put()
+		// TODO(b5): at least confirm ratchet is equal to this one, possibly pass ratchet value in
+		if err != nil {
+			return nil, fmt.Errorf("writing metadata: %w", err)
+		}
+		pt.header.Metadata = res.Cid
+	}
+
 	blk, err := pt.header.encryptHeaderBlock(key)
 	if err != nil {
 		return nil, err
 	}
 
-	if err = pt.fs.Blockservice().Blockstore().PutMany(ctx, []blocks.Block{blk, linksBlk}); err != nil {
+	if err = pt.store.Blockservice().Blockstore().PutMany(ctx, []blocks.Block{blk, linksBlk}); err != nil {
 		return nil, err
 	}
 	pt.cid = blk.Cid()
@@ -698,12 +716,12 @@ func (pt *Tree) Put() (base.PutResult, error) {
 		return nil, err
 	}
 
-	if _, err = pt.fs.RatchetStore().PutRatchet(ctx, pt.header.Info.INumber.Encode(), pt.ratchet); err != nil {
+	if _, err = pt.store.RatchetStore().PutRatchet(ctx, pt.header.Info.INumber.Encode(), pt.ratchet); err != nil {
 		return nil, err
 	}
 
 	idBytes := CborByteArray(pt.cid.Bytes())
-	if err := pt.fs.HAMT().Root().Set(ctx, string(privName), &idBytes); err != nil {
+	if err := pt.store.HAMT().Root().Set(ctx, string(privName), &idBytes); err != nil {
 		return nil, err
 	}
 
@@ -730,35 +748,65 @@ func (pt *Tree) removeUserlandLink(name string) {
 }
 
 type File struct {
-	fs     Store
+	store  Store
 	name   string  // not persisted. used to implement fs.File interface
 	cid    cid.Cid // cid header was loaded from. empty if new
 	header Header
 
-	ratchet *ratchet.Spiral
-	content io.ReadCloser
+	ratchet  *ratchet.Spiral
+	metadata *LDFile
+	content  io.ReadCloser
 }
 
 var (
-	_ privateNode = (*File)(nil)
-	_ fs.File     = (*File)(nil)
-	_ Info        = (*File)(nil)
+	_ privateNode           = (*File)(nil)
+	_ base.WritableMetaNode = (*File)(nil)
+	_ fs.File               = (*File)(nil)
+	_ Info                  = (*File)(nil)
 )
 
-func NewFile(fs Store, parent BareNamefilter, f fs.File) (*File, error) {
+func NewFile(store Store, parent BareNamefilter, content fs.File) (*File, error) {
+	var meta interface{}
+	if mdn, ok := content.(base.Metadata); ok {
+		md, err := mdn.Metadata()
+		if err != nil {
+			return nil, err
+		}
+		meta, err = md.Data()
+		if err != nil {
+			return nil, err
+		}
+		log.Debugw("setting file meta", "meta", meta)
+	}
+
+	return NewFileMetadata(store, parent, content, meta)
+}
+
+func NewFileMetadata(store Store, parent BareNamefilter, f fs.File, meta interface{}) (*File, error) {
 	in := NewINumber()
+	r := ratchet.NewSpiral()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
 		return nil, err
 	}
 
+	var md *LDFile
+	if meta != nil {
+		log.Debugw("creating file metadata", "meta", meta)
+		// need to construct a new file here to keep stores aligned
+		if md, err = newLDFileRatchet(store, base.MetadataLinkName, meta, bnf, r); err != nil {
+			return nil, err
+		}
+	}
+
 	return &File{
-		fs:      fs,
-		ratchet: ratchet.NewSpiral(),
-		content: f,
+		store:   store,
+		ratchet: r,
 		header: Header{
 			Info: NewHeaderInfo(base.NTFile, in, bnf),
 		},
+		metadata: md,
+		content:  f,
 	}, nil
 }
 
@@ -777,7 +825,7 @@ func LoadFile(ctx context.Context, store Store, name string, key Key, id cid.Cid
 	header.Info.Ratchet = ""
 
 	return &File{
-		fs:      store,
+		store:   store,
 		ratchet: ratchet,
 		name:    name,
 		cid:     id,
@@ -790,18 +838,30 @@ func (pf *File) BareNamefilter() BareNamefilter { return pf.header.Info.BareName
 func (pf *File) INumber() INumber               { return pf.header.Info.INumber }
 func (pf *File) Cid() cid.Cid                   { return pf.cid }
 func (pf *File) Content() cid.Cid               { return pf.header.ContentID }
-func (pf *File) PrivateFS() Store               { return pf.fs }
+func (pf *File) PrivateFS() Store               { return pf.store }
 func (pf *File) IsDir() bool                    { return false }
 func (pf *File) ModTime() time.Time             { return time.Unix(pf.header.Info.Mtime, 0) }
 func (pf *File) Mode() fs.FileMode              { return fs.FileMode(pf.header.Info.Mode) }
 func (pf *File) Type() base.NodeType            { return pf.header.Info.Type }
 func (pf *File) Name() string                   { return pf.name }
 func (pf *File) Size() int64                    { return pf.header.Info.Size }
-func (pf *File) Sys() interface{}               { return pf.fs }
+func (pf *File) Sys() interface{}               { return pf.store }
 func (pf *File) Stat() (fs.FileInfo, error)     { return pf, nil }
 
-func (pf *File) Metadata() (base.LDFile, error) {
-	return nil, fmt.Errorf("unfinished: private.File.Metadata")
+func (pf *File) SetMetadata(md interface{}) (err error) {
+	log.Debugw("setting file metadata", "name", pf.name)
+	pf.metadata, err = newLDFileRatchet(pf.store, "", md, pf.BareNamefilter(), pf.ratchet)
+	return err
+}
+
+func (pf *File) Metadata() (f base.LDFile, err error) {
+	if pf.metadata == nil {
+		if !pf.header.Metadata.Defined() {
+			return nil, base.ErrNoLink
+		}
+		pf.metadata, err = LoadLDFile(pf.store.Context(), pf.store, base.MetadataLinkName, pf.header.Metadata, pf.Key())
+	}
+	return pf.metadata, err
 }
 
 func (pf *File) PrivateName() (Name, error) {
@@ -845,7 +905,7 @@ func (pf *File) SetContents(f fs.File) {
 func (pf *File) ensureContent() (err error) {
 	if pf.content == nil {
 		key := pf.ratchet.Key()
-		pf.content, err = pf.fs.GetEncryptedFile(pf.header.ContentID, key[:])
+		pf.content, err = pf.store.GetEncryptedFile(pf.header.ContentID, key[:])
 		log.Debugw("opening file contents", "name", pf.name, "cid", pf.cid, "err", err)
 	}
 	return err
@@ -859,10 +919,10 @@ func (pf *File) Update(change fs.File) (result PutResult, err error) {
 		}
 
 		// update is changing from file to data file
-		df := &DataFile{
-			fs:   pf.fs,
-			cid:  pf.cid,
-			name: pf.name,
+		df := &LDFile{
+			store: pf.store,
+			cid:   pf.cid,
+			name:  pf.name,
 			header: Header{
 				Info:     pf.header.Info.Copy(),
 				Metadata: pf.header.Metadata,
@@ -873,13 +933,29 @@ func (pf *File) Update(change fs.File) (result PutResult, err error) {
 		return df.Put()
 	}
 
+	if mdn, ok := change.(base.Metadata); ok {
+		md, err := mdn.Metadata()
+		if err != nil {
+			return PutResult{}, err
+		}
+		meta, err := md.Data()
+		if err != nil {
+			return PutResult{}, err
+		}
+		log.Debugw("setting update file meta", "meta", meta)
+		pf.metadata, err = newLDFileRatchet(pf.store, base.MetadataLinkName, meta, pf.BareNamefilter(), pf.ratchet)
+		if err != nil {
+			return PutResult{}, err
+		}
+	}
+
 	pf.SetContents(change)
 	return pf.Put()
 }
 
 func (pf *File) Put() (PutResult, error) {
-	ctx := context.TODO()
-	store := pf.fs
+	ctx := pf.store.Context()
+	store := pf.store
 
 	// generate a new version key by advancing the ratchet
 	// TODO(b5): what happens if anything errors after advancing the ratchet?
@@ -890,6 +966,16 @@ func (pf *File) Put() (PutResult, error) {
 	res, err := store.PutEncryptedFile(base.NewMemfileReader(pf.name, pf.content), key[:])
 	if err != nil {
 		return PutResult{}, err
+	}
+
+	if pf.metadata != nil {
+		res, err := pf.metadata.Put()
+		// TODO(b5): at least confirm ratchet is equal to this one, possibly pass ratchet value in
+		if err != nil {
+			return PutResult{}, fmt.Errorf("writing metadata: %w", err)
+		}
+		log.Debugw("put file metadata", "name", pf.name, "metaCID", res.Cid)
+		pf.header.Metadata = res.Cid
 	}
 
 	// update header details
@@ -919,7 +1005,7 @@ func (pf *File) Put() (PutResult, error) {
 	}
 
 	idBytes := CborByteArray(pf.cid.Bytes())
-	if err := pf.fs.HAMT().Root().Set(ctx, string(privName), &idBytes); err != nil {
+	if err := pf.store.HAMT().Root().Set(ctx, string(privName), &idBytes); err != nil {
 		return PutResult{}, err
 	}
 
@@ -958,9 +1044,9 @@ type PrivateLink struct {
 	Pointer Name
 }
 
-func LoadNode(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (privateNode, error) {
+func LoadNode(ctx context.Context, store Store, name string, id cid.Cid, key Key) (privateNode, error) {
 	log.Debugw("LoadNode", "name", name, "id", id)
-	header, err := loadHeader(ctx, fs, key, id)
+	header, err := loadHeader(ctx, store, key, id)
 	if err != nil {
 		log.Debugw("LoadNode", "err", err)
 		return nil, fmt.Errorf("decoding s-node %q header: %w", name, err)
@@ -975,15 +1061,15 @@ func LoadNode(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (
 	switch header.Info.Type {
 	case base.NTFile:
 		return &File{
-			fs:      fs,
+			store:   store,
 			cid:     id,
 			name:    name,
 			header:  header,
 			ratchet: r,
 		}, nil
 	case base.NTLDFile:
-		return &DataFile{
-			fs:      fs,
+		return &LDFile{
+			store:   store,
 			cid:     id,
 			name:    name,
 			header:  header,
@@ -992,7 +1078,7 @@ func LoadNode(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (
 		}, nil
 	case base.NTDir:
 		return &Tree{
-			fs:      fs,
+			store:   store,
 			cid:     id,
 			name:    name,
 			header:  header,
@@ -1120,7 +1206,7 @@ type Header struct {
 	Info      HeaderInfo
 	Metadata  cid.Cid
 	ContentID cid.Cid
-	Value     interface{} // only present on dataFile nodes
+	Value     interface{} // only present on LDFile nodes
 }
 
 type HeaderInfo struct {
@@ -1198,7 +1284,7 @@ func (h Header) encryptHeaderBlock(key Key) (blocks.Block, error) {
 		"content": h.ContentID,
 	}
 	log.Debugw("content", "cid", h.ContentID)
-	if !h.Metadata.Equals(cid.Undef) {
+	if h.Metadata.Defined() {
 		header["metadata"] = h.Metadata
 	}
 	return cbornode.WrapObject(header, base.DefaultMultihashType, -1)
@@ -1246,6 +1332,7 @@ func decodeHeaderBlock(blk blocks.Block, key Key) (h Header, err error) {
 			log.Debugw("decodeHeaderBlock", "err", err)
 			return h, err
 		}
+		log.Debugw("read header metadata cid", "cid", h.Metadata)
 	}
 
 	if h.Info.Type == base.NTLDFile {
@@ -1262,7 +1349,7 @@ func decodeHeaderBlock(blk blocks.Block, key Key) (h Header, err error) {
 			}
 			h.Value = v
 		} else {
-			return h, fmt.Errorf("datafile header has no value field")
+			return h, fmt.Errorf("LDFile header has no value field")
 		}
 	} else {
 		if content, ok := env["content"].(cbor.Tag); ok {
@@ -1290,34 +1377,37 @@ func cidFromCBORTag(v interface{}) (cid.Cid, error) {
 	return cid.Cast(d[1:])
 }
 
-type DataFile struct {
-	fs   Store
-	name string
-	cid  cid.Cid
+type LDFile struct {
+	store Store
+	name  string
+	cid   cid.Cid
 
-	ratchet *ratchet.Spiral
-	header  Header
-	// metadata    *cid.Cid
+	ratchet     *ratchet.Spiral
+	header      Header
 	content     interface{}
 	jsonContent *bytes.Buffer
 }
 
 var (
-	_ base.LDFile = (*DataFile)(nil)
-	_ base.Node   = (*DataFile)(nil)
+	_ base.LDFile = (*LDFile)(nil)
+	_ base.Node   = (*LDFile)(nil)
 )
 
-func NewDataFile(fs Store, name string, content interface{}, parent BareNamefilter) (*DataFile, error) {
+func NewLDFile(store Store, name string, content interface{}, parent BareNamefilter) (*LDFile, error) {
+	return newLDFileRatchet(store, name, content, parent, ratchet.NewSpiral())
+}
+
+func newLDFileRatchet(store Store, name string, content interface{}, parent BareNamefilter, r *ratchet.Spiral) (*LDFile, error) {
 	in := NewINumber()
 	bnf, err := NewBareNamefilter(parent, in)
 	if err != nil {
 		return nil, err
 	}
 
-	return &DataFile{
-		fs:      fs,
+	return &LDFile{
+		store:   store,
 		name:    name,
-		ratchet: ratchet.NewSpiral(),
+		ratchet: r,
 		header: Header{
 			Info: NewHeaderInfo(base.NTLDFile, in, bnf),
 		},
@@ -1325,11 +1415,11 @@ func NewDataFile(fs Store, name string, content interface{}, parent BareNamefilt
 	}, nil
 }
 
-func LoadDataFile(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (*DataFile, error) {
-	df := &DataFile{
-		fs:   fs,
-		name: name,
-		cid:  id,
+func LoadLDFile(ctx context.Context, fs Store, name string, id cid.Cid, key Key) (*LDFile, error) {
+	df := &LDFile{
+		store: fs,
+		name:  name,
+		cid:   id,
 	}
 
 	blk, err := fs.Blockservice().GetBlock(ctx, id)
@@ -1337,10 +1427,10 @@ func LoadDataFile(ctx context.Context, fs Store, name string, id cid.Cid, key Ke
 		return nil, err
 	}
 
-	return decodeDataFileBlock(df, blk, key)
+	return decodeLDFileBlock(df, blk, key)
 }
 
-func decodeDataFileBlock(df *DataFile, blk blocks.Block, key Key) (*DataFile, error) {
+func decodeLDFileBlock(df *LDFile, blk blocks.Block, key Key) (*LDFile, error) {
 	aead, err := newCipher(key[:])
 	if err != nil {
 		return nil, err
@@ -1353,7 +1443,7 @@ func decodeDataFileBlock(df *DataFile, blk blocks.Block, key Key) (*DataFile, er
 
 	ciphertext, ok := env["info"].([]byte)
 	if !ok {
-		return nil, fmt.Errorf("malformed private DataFile node %s: missing info bytes", blk.Cid())
+		return nil, fmt.Errorf("malformed private LDFile node %s: missing info bytes", blk.Cid())
 	}
 	plaintext, err := aead.Open(nil, ciphertext[:aead.NonceSize()], ciphertext[aead.NonceSize():], nil)
 	if err != nil {
@@ -1365,8 +1455,8 @@ func decodeDataFileBlock(df *DataFile, blk blocks.Block, key Key) (*DataFile, er
 		return nil, err
 	}
 
-	if ciphertext, ok = env["content"].([]byte); !ok {
-		return nil, fmt.Errorf("malformed private DataFile node %s: missing content bytes", blk.Cid())
+	if ciphertext, ok = env["value"].([]byte); !ok {
+		return nil, fmt.Errorf("malformed private LDFile node %s: missing content bytes", blk.Cid())
 	}
 	if plaintext, err = aead.Open(nil, ciphertext[:aead.NonceSize()], ciphertext[aead.NonceSize():], nil); err != nil {
 		return nil, err
@@ -1375,27 +1465,27 @@ func decodeDataFileBlock(df *DataFile, blk blocks.Block, key Key) (*DataFile, er
 	if err := cbor.Unmarshal(plaintext, &content); err != nil {
 		return nil, err
 	}
-	df.content = content
 
-	return df, nil
+	df.content, err = base.SanitizeCBORForJSON(content)
+	return df, err
 }
 
-func (df *DataFile) IsBare() bool                   { return false }
-func (df *DataFile) Links() base.Links              { return base.NewLinks() } // TODO(b5): remove Links method?
-func (df *DataFile) Name() string                   { return df.name }
-func (df *DataFile) Size() int64                    { return df.header.Info.Size }
-func (df *DataFile) ModTime() time.Time             { return time.Unix(df.header.Info.Mtime, 0) }
-func (df *DataFile) Mode() fs.FileMode              { return fs.FileMode(df.header.Info.Mode) }
-func (df *DataFile) Type() base.NodeType            { return df.header.Info.Type }
-func (df *DataFile) IsDir() bool                    { return false }
-func (df *DataFile) Sys() interface{}               { return df.fs }
-func (df *DataFile) Cid() cid.Cid                   { return df.cid }
-func (df *DataFile) Stat() (fs.FileInfo, error)     { return df, nil }
-func (df *DataFile) Data() (interface{}, error)     { return df.content, nil }
-func (df *DataFile) BareNamefilter() BareNamefilter { return df.header.Info.BareNamefilter }
-func (df *DataFile) INumber() INumber               { return df.header.Info.INumber }
-func (df *DataFile) Ratchet() *ratchet.Spiral       { return df.ratchet }
-func (df *DataFile) PrivateName() (Name, error) {
+func (df *LDFile) IsBare() bool                   { return false }
+func (df *LDFile) Links() base.Links              { return base.NewLinks() } // TODO(b5): remove Links method?
+func (df *LDFile) Name() string                   { return df.name }
+func (df *LDFile) Size() int64                    { return df.header.Info.Size }
+func (df *LDFile) ModTime() time.Time             { return time.Unix(df.header.Info.Mtime, 0) }
+func (df *LDFile) Mode() fs.FileMode              { return fs.FileMode(df.header.Info.Mode) }
+func (df *LDFile) Type() base.NodeType            { return df.header.Info.Type }
+func (df *LDFile) IsDir() bool                    { return false }
+func (df *LDFile) Sys() interface{}               { return df.store }
+func (df *LDFile) Cid() cid.Cid                   { return df.cid }
+func (df *LDFile) Stat() (fs.FileInfo, error)     { return df, nil }
+func (df *LDFile) Data() (interface{}, error)     { return df.content, nil }
+func (df *LDFile) BareNamefilter() BareNamefilter { return df.header.Info.BareNamefilter }
+func (df *LDFile) INumber() INumber               { return df.header.Info.INumber }
+func (df *LDFile) Ratchet() *ratchet.Spiral       { return df.ratchet }
+func (df *LDFile) PrivateName() (Name, error) {
 	knf, err := AddKey(df.header.Info.BareNamefilter, Key(df.ratchet.Key()))
 	if err != nil {
 		return "", err
@@ -1403,29 +1493,29 @@ func (df *DataFile) PrivateName() (Name, error) {
 	return ToName(knf)
 }
 
-func (df *DataFile) Metadata() (base.LDFile, error) {
-	return nil, fmt.Errorf("unfinished: private.DataFile.Meta")
+func (df *LDFile) Metadata() (base.LDFile, error) {
+	return nil, fmt.Errorf("unfinished: private.LDFile.Meta")
 }
 
-func (df *DataFile) ReadDir(n int) ([]fs.DirEntry, error) {
-	return nil, fmt.Errorf("unfinished: private.DataFile.ReadDir")
+func (df *LDFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	return nil, fmt.Errorf("unfinished: private.LDFile.ReadDir")
 }
 
-func (df *DataFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
+func (df *LDFile) History(ctx context.Context, maxRevs int) ([]base.HistoryEntry, error) {
 	// TODO(b5): support history
 	return nil, fmt.Errorf("no history")
 }
 
-func (df *DataFile) Read(p []byte) (n int, err error) {
+func (df *LDFile) Read(p []byte) (n int, err error) {
 	if err = df.ensureContent(); err != nil {
 		return 0, err
 	}
 	return df.jsonContent.Read(p)
 }
 
-func (df *DataFile) ensureContent() (err error) {
+func (df *LDFile) ensureContent() (err error) {
 	if df.jsonContent == nil {
-		log.Debugw("DataFile loading content", "name", df.name, "cid", df.cid)
+		log.Debugw("LDFile loading content", "name", df.name, "cid", df.cid)
 		buf := &bytes.Buffer{}
 		// TODO(b5): use faster json lib
 		if err := json.NewEncoder(buf).Encode(df.content); err != nil {
@@ -1436,14 +1526,14 @@ func (df *DataFile) ensureContent() (err error) {
 	return nil
 }
 
-func (df *DataFile) Close() error { return nil }
+func (df *LDFile) Close() error { return nil }
 
-func (df *DataFile) SetContents(data interface{}) {
+func (df *LDFile) SetContents(data interface{}) {
 	df.content = data
 	df.jsonContent = nil
 }
 
-func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
+func (df *LDFile) Update(change fs.File) (result PutResult, err error) {
 	if changeDF, ok := change.(base.LDFile); ok {
 		v, err := changeDF.Data()
 		if err != nil {
@@ -1455,9 +1545,9 @@ func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
 
 	// update is changing from data file to file
 	f := &File{
-		fs:   df.fs,
-		name: df.name,
-		cid:  df.cid,
+		store: df.store,
+		name:  df.name,
+		cid:   df.cid,
 		header: Header{
 			Info:     df.header.Info.Copy(),
 			Metadata: df.header.Metadata,
@@ -1468,7 +1558,7 @@ func (df *DataFile) Update(change fs.File) (result PutResult, err error) {
 	return f.Put()
 }
 
-func (df *DataFile) Put() (result PutResult, err error) {
+func (df *LDFile) Put() (result PutResult, err error) {
 	df.ratchet.Inc()
 	key := df.ratchet.Key()
 	ctx := context.TODO()
@@ -1488,7 +1578,7 @@ func (df *DataFile) Put() (result PutResult, err error) {
 		return result, err
 	}
 
-	if err = df.fs.Blockservice().Blockstore().Put(ctx, blk); err != nil {
+	if err = df.store.Blockservice().Blockstore().Put(ctx, blk); err != nil {
 		return result, err
 	}
 
@@ -1505,7 +1595,7 @@ func (df *DataFile) Put() (result PutResult, err error) {
 	}, nil
 }
 
-func (df *DataFile) AsHistoryEntry() base.HistoryEntry {
+func (df *LDFile) AsHistoryEntry() base.HistoryEntry {
 	return base.HistoryEntry{
 		Cid:   df.cid,
 		Size:  df.header.Info.Size,
@@ -1514,7 +1604,7 @@ func (df *DataFile) AsHistoryEntry() base.HistoryEntry {
 	}
 }
 
-func (df *DataFile) encodeBlock(key Key) (blocks.Block, error) {
+func (df *LDFile) encodeBlock(key Key) (blocks.Block, error) {
 	aead, err := newCipher(key[:])
 	if err != nil {
 		return nil, err
@@ -1540,11 +1630,14 @@ func (df *DataFile) encodeBlock(key Key) (blocks.Block, error) {
 	contentCipher := append(nonce, cipher...)
 
 	// TODO(b5): link name obfuscation
-	dataFile := map[string]interface{}{
-		"info":     infoCipher,
-		"value":    contentCipher,
-		"metadata": df.Metadata,
+	LDFile := map[string]interface{}{
+		"info":  infoCipher,
+		"value": contentCipher,
 	}
 
-	return cbornode.WrapObject(dataFile, base.DefaultMultihashType, -1)
+	if df.header.Metadata.Defined() {
+		LDFile["metadata"] = df.header.Metadata
+	}
+
+	return cbornode.WrapObject(LDFile, base.DefaultMultihashType, -1)
 }

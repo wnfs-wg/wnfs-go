@@ -52,17 +52,7 @@ func main() {
 			return err
 		},
 		Commands: []*cli.Command{
-			{
-				Name:  "mkdir",
-				Usage: "create a directory",
-				Action: func(c *cli.Context) error {
-					defer repo.Close()
-					fs := repo.WNFS()
-					return fs.Mkdir(c.Args().Get(0), wnfs.MutationOptions{
-						Commit: true,
-					})
-				},
-			},
+			// read commands
 			{
 				Name:  "cat",
 				Usage: "cat a file",
@@ -96,6 +86,111 @@ size:	%d
 `[1:], n.Cid(), n.Type(), n.Size())
 
 					return nil
+				},
+			},
+			{
+				Name:  "ls",
+				Usage: "list the contents of a directory",
+				Action: func(c *cli.Context) error {
+					fs := repo.WNFS()
+					entries, err := fs.Ls(c.Args().Get(0))
+					if err != nil {
+						return err
+					}
+
+					for _, entry := range entries {
+						fmt.Println(entry.Name())
+					}
+					return nil
+				},
+			},
+			{
+				Name:  "tree",
+				Usage: "show a tree rooted at a given path",
+				Action: func(c *cli.Context) error {
+					path := c.Args().Get(0)
+					fs := repo.WNFS()
+					// TODO(b5): can't yet create tree from wnfs root.
+					// for now replace empty string with "public"
+					if path == "" {
+						path = "."
+					}
+
+					s, err := treeString(fs, path)
+					if err != nil {
+						return err
+					}
+
+					os.Stdout.Write([]byte(s))
+					return nil
+				},
+			},
+			{
+				Name:    "log",
+				Aliases: []string{"history"},
+				Usage:   "show the history of a path",
+				Action: func(c *cli.Context) error {
+					fs := repo.WNFS()
+					entries, err := fs.History(context.TODO(), c.Args().Get(0), -1)
+					if err != nil {
+						return err
+					}
+
+					fmt.Println("date\tsize\tcid\tkey\tprivate name")
+					for _, entry := range entries {
+						ts := time.Unix(entry.Mtime, 0)
+						fmt.Printf("%s\t%s\t%s\t%s\t%s\n", ts.Format(time.RFC3339), humanize.Bytes(uint64(entry.Size)), entry.Cid, entry.Key, entry.PrivateName)
+					}
+					return nil
+				},
+			},
+			{
+				Name:  "diff",
+				Usage: "",
+				Action: func(c *cli.Context) error {
+					cmdCtx, cancel := context.WithCancel(ctx)
+					defer cancel()
+					fs := repo.WNFS()
+
+					entries, err := fs.History(context.TODO(), ".", 2)
+					if err != nil {
+						return err
+					}
+					if len(entries) < 2 {
+						fmt.Println("no history")
+						return nil
+					}
+
+					key := &wnfs.Key{}
+					if err := key.Decode(entries[1].Key); err != nil {
+						return err
+					}
+
+					prev, err := wnfs.FromCID(cmdCtx, repo.Store().Blockservice(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
+					if err != nil {
+						errExit("error: opening previous WNFS %s:\n%s\n", entries[1].Cid, err.Error())
+					}
+
+					diff, err := fsdiff.Unix("", "", prev, fs)
+					if err != nil {
+						errExit("error: constructing diff: %s", err)
+					}
+
+					fmt.Println(fsdiff.PrettyPrintFileDiffs(diff))
+					return nil
+				},
+			},
+
+			// write commands
+			{
+				Name:  "mkdir",
+				Usage: "create a directory",
+				Action: func(c *cli.Context) error {
+					fs := repo.WNFS()
+					if err := fs.Mkdir(c.Args().Get(0)); err != nil {
+						return err
+					}
+					return repo.Commit(fs)
 				},
 			},
 			{
@@ -139,11 +234,11 @@ size:	%d
 						f = wnfs.NewLDFile(filepath.Base(path), v)
 					}
 
-					defer repo.Close()
 					fs := repo.WNFS()
-					return fs.Write(path, f, wnfs.MutationOptions{
-						Commit: true,
-					})
+					if err := fs.Write(path, f); err != nil {
+						return err
+					}
+					return repo.Commit(fs)
 				},
 			},
 			{
@@ -160,115 +255,22 @@ size:	%d
 					localFS := os.DirFS(filepath.Dir(localPath))
 					path := filepath.Base(localPath)
 
-					defer repo.Close()
 					fs := repo.WNFS()
-					err = fs.Cp(wnfsPath, path, localFS, wnfs.MutationOptions{
-						Commit: true,
-					})
-					return err
-				},
-			},
-			{
-				Name:  "ls",
-				Usage: "list the contents of a directory",
-				Action: func(c *cli.Context) error {
-					fs := repo.WNFS()
-					entries, err := fs.Ls(c.Args().Get(0))
-					if err != nil {
+					if err = fs.Cp(wnfsPath, path, localFS); err != nil {
 						return err
 					}
-
-					for _, entry := range entries {
-						fmt.Println(entry.Name())
-					}
-					return nil
-				},
-			},
-			{
-				Name:    "log",
-				Aliases: []string{"history"},
-				Usage:   "show the history of a path",
-				Action: func(c *cli.Context) error {
-					fs := repo.WNFS()
-					entries, err := fs.History(context.TODO(), c.Args().Get(0), -1)
-					if err != nil {
-						return err
-					}
-
-					fmt.Println("date\tsize\tcid\tkey\tprivate name")
-					for _, entry := range entries {
-						ts := time.Unix(entry.Mtime, 0)
-						fmt.Printf("%s\t%s\t%s\t%s\t%s\n", ts.Format(time.RFC3339), humanize.Bytes(uint64(entry.Size)), entry.Cid, entry.Key, entry.PrivateName)
-					}
-					return nil
+					return repo.Commit(fs)
 				},
 			},
 			{
 				Name:  "rm",
 				Usage: "remove files and directories",
 				Action: func(c *cli.Context) error {
-					defer repo.Close()
 					fs := repo.WNFS()
-					return fs.Rm(c.Args().Get(0), wnfs.MutationOptions{
-						Commit: true,
-					})
-				},
-			},
-			{
-				Name:  "tree",
-				Usage: "show a tree rooted at a given path",
-				Action: func(c *cli.Context) error {
-					path := c.Args().Get(0)
-					fs := repo.WNFS()
-					// TODO(b5): can't yet create tree from wnfs root.
-					// for now replace empty string with "public"
-					if path == "" {
-						path = "."
-					}
-
-					s, err := treeString(fs, path)
-					if err != nil {
+					if err := fs.Rm(c.Args().Get(0)); err != nil {
 						return err
 					}
-
-					os.Stdout.Write([]byte(s))
-					return nil
-				},
-			},
-			{
-				Name:  "diff",
-				Usage: "",
-				Action: func(c *cli.Context) error {
-					cmdCtx, cancel := context.WithCancel(ctx)
-					defer cancel()
-					fs := repo.WNFS()
-
-					entries, err := fs.History(context.TODO(), ".", 2)
-					if err != nil {
-						return err
-					}
-					if len(entries) < 2 {
-						fmt.Println("no history")
-						return nil
-					}
-
-					key := &wnfs.Key{}
-					if err := key.Decode(entries[1].Key); err != nil {
-						return err
-					}
-
-					prev, err := wnfs.FromCID(cmdCtx, repo.Store().Blockservice(), repo.RatchetStore(), entries[1].Cid, *key, wnfs.PrivateName(entries[1].PrivateName))
-					if err != nil {
-						errExit("error: opening previous WNFS %s:\n%s\n", entries[1].Cid, err.Error())
-					}
-
-					diff, err := fsdiff.Unix("", "", prev, fs)
-					if err != nil {
-						errExit("error: constructing diff: %s", err)
-					}
-
-					fmt.Println(fsdiff.PrettyPrintFileDiffs(diff))
-					return nil
+					return repo.Commit(fs)
 				},
 			},
 			{
@@ -291,11 +293,14 @@ size:	%d
 					b := bRepo.WNFS()
 					fmt.Printf("done\n")
 
-					defer repo.Close()
-					_, err = wnfs.Merge(cmdCtx, a, b)
-					return err
+					if err = wnfs.Merge(cmdCtx, a, b); err != nil {
+						return err
+					}
+					return repo.Commit(a)
 				},
 			},
+
+			// metadata commands
 			{
 				Name:  "meta",
 				Usage: "",
@@ -304,7 +309,6 @@ size:	%d
 						Name:  "set",
 						Usage: "",
 						Action: func(c *cli.Context) error {
-							defer repo.Close()
 							fs := repo.WNFS()
 							path := c.Args().Get(0)
 							metaPath := c.Args().Get(1)
@@ -328,11 +332,7 @@ size:	%d
 							if err = f.(base.WritableMetaNode).SetMetadata(meta); err != nil {
 								return err
 							}
-							if err = fs.Commit(); err != nil {
-								return err
-							}
-
-							return nil
+							return repo.Commit(fs)
 						},
 					},
 					{
@@ -363,6 +363,8 @@ size:	%d
 					},
 				},
 			},
+
+			// HTTP gateway
 			{
 				Name:  "gateway",
 				Usage: "",

@@ -14,10 +14,11 @@ import (
 	golog "github.com/ipfs/go-log"
 	base "github.com/qri-io/wnfs-go/base"
 	mockblocks "github.com/qri-io/wnfs-go/mockblocks"
-	"github.com/qri-io/wnfs-go/private"
-	"github.com/qri-io/wnfs-go/private/ratchet"
-	"github.com/qri-io/wnfs-go/public"
-	"github.com/stretchr/testify/require"
+	private "github.com/qri-io/wnfs-go/private"
+	ratchet "github.com/qri-io/wnfs-go/private/ratchet"
+	public "github.com/qri-io/wnfs-go/public"
+	"github.com/stretchr/testify/assert"
+	require "github.com/stretchr/testify/require"
 )
 
 var testRootKey Key = [32]byte{
@@ -33,7 +34,42 @@ func init() {
 	}
 }
 
+func TestTransactions(t *testing.T) {
+	require := require.New(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := newMemTestStore(ctx, t)
+	rs := ratchet.NewMemStore(ctx)
+
+	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
+	require.Nil(err)
+
+	err = fsys.Write("public/hello.txt", base.NewMemfileBytes("hello.txt", []byte("hello")))
+	require.Nil(err)
+	res, err := fsys.Commit()
+	require.Nil(err)
+
+	_, err = FromCID(ctx, store.Blockservice(), rs, res.Root, *res.PrivateKey, *res.PrivateName)
+	require.Nil(err)
+
+	err = fsys.Write("public/goodbye.txt", base.NewMemfileBytes("goodbye.txt", []byte("goodbye")))
+	require.Nil(err)
+	err = fsys.Write("public/hello.txt", base.NewMemfileBytes("hello.txt", []byte("hello number two")))
+	res, err = fsys.Commit()
+	require.Nil(err)
+
+	ents, err := fsys.History(ctx, "", -1)
+	require.Nil(err)
+	assert.Equal(t, 3, len(ents))
+
+	_, err = FromCID(ctx, store.Blockservice(), rs, res.Root, *res.PrivateKey, *res.PrivateName)
+	require.Nil(err)
+}
+
 func TestPublicWNFS(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -42,82 +78,58 @@ func TestPublicWNFS(t *testing.T) {
 		rs := ratchet.NewMemStore(ctx)
 
 		fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.Nil(err)
 
 		pathStr := "public/foo/hello.txt"
 		fileContents := []byte("hello!")
 		f := base.NewMemfileBytes("hello.txt", fileContents)
 
-		if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
-			t.Error(err)
-		}
+		err = fsys.Write(pathStr, f)
+		require.Nil(err)
+		_, err = fsys.Commit()
+		require.Nil(err)
 
 		t.Logf("wnfs root CID: %s", fsys.Cid())
 
 		gotFileContents, err := fsys.Cat(pathStr)
-		if err != nil {
-			t.Fatal(err)
-		}
-
+		require.Nil(err)
 		if diff := cmp.Diff(fileContents, gotFileContents); diff != "" {
 			t.Errorf("result mismatch. (-want +got):\n%s", diff)
 		}
 
 		ents, err := fsys.Ls("public/foo")
-		if err != nil {
-			t.Error(err)
-		}
-		if len(ents) != 1 {
-			t.Errorf("expected 1 entries. got: %d", len(ents))
-		}
+		require.Nil(err)
+		assert.Equal(len(ents), 1)
 
-		if err := fsys.Rm(pathStr, MutationOptions{Commit: true}); err != nil {
-			t.Error(err)
-		}
+		err = fsys.Rm(pathStr)
+		require.Nil(err)
 
 		_, err = fsys.Cat(pathStr)
-		if !errors.Is(err, base.ErrNotFound) {
-			t.Errorf("expected calling cat on removed path to return wrap of base.ErrNotFound. got: %s", err)
-		}
+		require.ErrorIs(err, base.ErrNotFound)
 
-		if err := fsys.Mkdir("public/bar"); err != nil {
-			t.Error(err)
-		}
+		err = fsys.Mkdir("public/bar")
+		require.Nil(err)
 
 		ents, err = fsys.Ls("public/foo")
-		if err != nil {
-			t.Error(err)
-		}
-		if len(ents) != 0 {
-			t.Errorf("expected no entries. got: %d", len(ents))
-		}
+		require.Nil(err)
+		assert.Equal(len(ents), 0)
 
 		ents, err = fsys.Ls("public")
-		if err != nil {
-			t.Error(err)
-		}
-		if len(ents) != 2 {
-			t.Errorf("expected 2 entries. got: %d", len(ents))
-		}
+		require.Nil(err)
+		assert.Equal(len(ents), 2)
 
 		dfs := os.DirFS("./testdata")
-		if err := fsys.Cp("public/cats", "cats", dfs, MutationOptions{Commit: true}); err != nil {
-			t.Error(err)
-		}
+		err = fsys.Cp("public/cats", "cats", dfs)
+		require.Nil(err)
 
 		ents, err = fsys.Ls("public/cats")
-		if err != nil {
-			t.Error(err)
-		}
-		if len(ents) != 2 {
-			t.Errorf("expected 2 entries. got: %d", len(ents))
-		}
+		require.Nil(err)
+		assert.Equal(len(ents), 2)
 	})
 }
 
 func TestMerge(t *testing.T) {
+	require := require.New(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -132,29 +144,37 @@ func TestMerge(t *testing.T) {
 	pathStr := "public/foo/hello.txt"
 	fileContents := []byte("hello!")
 	f := base.NewMemfileBytes("hello.txt", fileContents)
-	err = a.Write(pathStr, f, MutationOptions{Commit: true})
-	require.Nil(t, err)
+	err = a.Write(pathStr, f)
+	require.Nil(err)
+	_, err = a.Commit()
+	require.Nil(err)
 
 	pn, err := a.PrivateName()
-	require.Nil(t, err)
+	require.Nil(err)
 
 	b, err := FromCID(ctx, store.Blockservice(), rs, a.Cid(), a.RootKey(), pn)
-	require.Nil(t, err)
+	require.Nil(err)
 
 	pathStr = "public/foo/world.txt"
 	fileContents = []byte("world!")
 	f = base.NewMemfileBytes("world.txt", fileContents)
-	err = a.Write(pathStr, f, MutationOptions{Commit: true})
-	require.Nil(t, err)
+	err = a.Write(pathStr, f)
+	require.Nil(err)
+	_, err = a.Commit()
+	require.Nil(err)
 
 	pathStr = "public/bonjour.txt"
 	fileContents = []byte("bjr!")
 	f = base.NewMemfileBytes("bonjour.txt", fileContents)
-	err = b.Write(pathStr, f, MutationOptions{Commit: true})
-	require.Nil(t, err)
+	err = b.Write(pathStr, f)
+	require.Nil(err)
+	_, err = a.Commit()
+	require.Nil(err)
 
-	res, err := Merge(ctx, a, b)
-	require.Nil(t, err)
+	err = Merge(ctx, a, b)
+	require.Nil(err)
+	res, err := a.Commit()
+	require.Nil(err)
 
 	t.Logf("%#v", res)
 }
@@ -176,9 +196,10 @@ func BenchmarkPublicCat10MbFile(t *testing.B) {
 		t.Fatal(err)
 	}
 	textFile := base.NewMemfileBytes("bench.txt", data)
-	fsys.Write("public/bench.txt", textFile, MutationOptions{
-		Commit: true,
-	})
+	err = fsys.Write("public/bench.txt", textFile)
+	require.Nil(t, err)
+	_, err = fsys.Commit()
+	require.Nil(t, err)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -196,21 +217,17 @@ func BenchmarkPublicWrite10MbFile(t *testing.B) {
 	store, cleanup := newFileTestStore(ctx, t)
 	defer cleanup()
 	fsys, err := NewEmptyFS(ctx, store.Blockservice(), rs, testRootKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	data := make([]byte, 1024*10)
-	if _, err := rand.Read(data); err != nil {
-		t.Fatal(err)
-	}
+	_, err = rand.Read(data)
+	require.Nil(t, err)
 	textFile := base.NewMemfileBytes("bench.txt", data)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		fsys.Write("public/bench.txt", textFile, MutationOptions{
-			Commit: true,
-		})
+		fsys.Write("public/bench.txt", textFile)
+		fsys.Commit()
 	}
 }
 
@@ -231,9 +248,10 @@ func BenchmarkPublicCat10MbFileSubdir(t *testing.B) {
 		t.Fatal(err)
 	}
 	textFile := base.NewMemfileBytes("bench.txt", data)
-	fsys.Write("public/subdir/bench.txt", textFile, MutationOptions{
-		Commit: true,
-	})
+	err = fsys.Write("public/subdir/bench.txt", textFile)
+	require.Nil(t, err)
+	_, err = fsys.Commit()
+	require.Nil(t, err)
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -263,9 +281,8 @@ func BenchmarkPublicWrite10MbFileSubdir(t *testing.B) {
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		fsys.Write("public/subdir/bench.txt", textFile, MutationOptions{
-			Commit: true,
-		})
+		fsys.Write("public/subdir/bench.txt", textFile)
+		fsys.Commit()
 	}
 }
 
@@ -303,9 +320,8 @@ func BenchmarkPublicCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		fsys.Cp("public/copy_me", "copy_me", dirFS, MutationOptions{
-			Commit: true,
-		})
+		fsys.Cp("public/copy_me", "copy_me", dirFS)
+		fsys.Commit()
 	}
 
 	if _, err := fsys.Open("public/copy_me/dir_0/bench.txt"); err != nil {
@@ -329,32 +345,24 @@ func TestWNFSPrivate(t *testing.T) {
 	fileContents := []byte("hello!")
 	f := base.NewMemfileBytes("hello.txt", fileContents)
 
-	if err := fsys.Write(pathStr, f, MutationOptions{Commit: true}); err != nil {
-		t.Error(err)
-	}
+	err = fsys.Write(pathStr, f)
+	require.Nil(t, err)
 
 	t.Logf("wnfs root CID: %s", fsys.Cid())
 
 	gotFileContents, err := fsys.Cat(pathStr)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.Nil(t, err)
 
 	if diff := cmp.Diff(fileContents, gotFileContents); diff != "" {
 		t.Errorf("result mismatch. (-want +got):\n%s", diff)
 	}
 
 	ents, err := fsys.Ls("private/foo")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 1 {
-		t.Errorf("expected 1 entries. got: %d", len(ents))
-	}
+	require.Nil(t, err)
+	assert.Equal(t, len(ents), 1)
 
-	if err := fsys.Rm(pathStr, MutationOptions{Commit: true}); err != nil {
-		t.Error(err)
-	}
+	err = fsys.Rm(pathStr)
+	require.Nil(t, err)
 
 	_, err = fsys.Cat(pathStr)
 	if !errors.Is(err, base.ErrNotFound) {
@@ -382,17 +390,14 @@ func TestWNFSPrivate(t *testing.T) {
 	}
 
 	dfs := os.DirFS("./testdata")
-	if err := fsys.Cp("private/cats", "cats", dfs, MutationOptions{Commit: true}); err != nil {
-		t.Error(err)
-	}
+	err = fsys.Cp("private/cats", "cats", dfs)
+	require.Nil(t, err)
+	_, err = fsys.Commit()
+	require.Nil(t, err)
 
 	ents, err = fsys.Ls("private/cats")
-	if err != nil {
-		t.Error(err)
-	}
-	if len(ents) != 2 {
-		t.Errorf("expected 2 entries. got: %d", len(ents))
-	}
+	require.Nil(t, err)
+	assert.Equal(t, len(ents), 2)
 
 	// close context
 	cancel()
@@ -437,9 +442,8 @@ func BenchmarkPrivateCat10MbFile(t *testing.B) {
 		t.Fatal(err)
 	}
 	textFile := base.NewMemfileBytes("bench.txt", data)
-	fsys.Write("private/bench.txt", textFile, MutationOptions{
-		Commit: true,
-	})
+	fsys.Write("private/bench.txt", textFile)
+	fsys.Commit()
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -469,9 +473,8 @@ func BenchmarkPrivateWrite10MbFile(t *testing.B) {
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		fsys.Write("private/bench.txt", textFile, MutationOptions{
-			Commit: true,
-		})
+		fsys.Write("private/bench.txt", textFile)
+		fsys.Commit()
 	}
 }
 
@@ -492,9 +495,8 @@ func BenchmarkPrivateCat10MbFileSubdir(t *testing.B) {
 		t.Fatal(err)
 	}
 	textFile := base.NewMemfileBytes("bench.txt", data)
-	fsys.Write("private/subdir/bench.txt", textFile, MutationOptions{
-		Commit: true,
-	})
+	fsys.Write("private/subdir/bench.txt", textFile)
+	fsys.Commit()
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
@@ -524,9 +526,8 @@ func BenchmarkPrivateWrite10MbFileSubdir(t *testing.B) {
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		fsys.Write("private/subdir/bench.txt", textFile, MutationOptions{
-			Commit: true,
-		})
+		fsys.Write("private/subdir/bench.txt", textFile)
+		fsys.Commit()
 	}
 }
 
@@ -564,9 +565,8 @@ func BenchmarkPrivateCp10DirectoriesWithOne10MbFileEach(t *testing.B) {
 	t.ResetTimer()
 
 	for i := 0; i < t.N; i++ {
-		fsys.Cp("private/copy_me", "copy_me", dirFS, MutationOptions{
-			Commit: true,
-		})
+		fsys.Cp("private/copy_me", "copy_me", dirFS)
+		fsys.Commit()
 	}
 
 	if _, err := fsys.Open("private/copy_me/dir_0/bench.txt"); err != nil {

@@ -3,9 +3,9 @@ default: build
 build:
 	go build -o wnfs ./cmd
 
-install:
-	go build -o wnfs ./cmd
-	cp wnfs /usr/local/go/bin/wnfs
+.PHONY: install
+install: build
+	@install -C wnfs /usr/local/go/bin/wnfs
 
 test:
 	go test --race --coverprofile=coverage.txt ./...
